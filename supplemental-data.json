@@ -1,0 +1,74 @@
+{
+  "2020/2021": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 4680,
+    "receivedFromRepack": 4503,
+    "dumped": 3912,
+    "pendingCashReceipts": 0,
+    "asOf": "5/2/2023"
+  },
+  "2021/2022": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 573,
+    "pendingCashReceipts": 0,
+    "asOf": "8/19/2022"
+  },
+  "2022/2023": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 9,
+    "pendingCashReceipts": 0,
+    "asOf": "8/8/2023"
+  },
+  "2023": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 5056,
+    "pendingCashReceipts": 1150.00,
+    "asOf": "1/9/2025"
+  },
+  "2023/2024": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 2019,
+    "pendingCashReceipts": 4210.60,
+    "asOf": "3/25/2025"
+  },
+  "2024/2025": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 1584,
+    "receivedFromRepack": 1419,
+    "dumped": 4856,
+    "pendingCashReceipts": 2988.00,
+    "asOf": "1/8/2026"
+  },
+  "2025": {
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 6264,
+    "pendingCashReceipts": 12748.23,
+    "asOf": "2/25/2026"
+  },
+  "2025/2026": {
+    "pendingToInvoice": 72,
+    "sentToRepack": 13306,
+    "receivedFromRepack": 11278,
+    "dumped": 2601,
+    "pendingCashReceipts": 102013.40,
+    "asOf": "4/10/2026"
+  },
+  "2026": {
+    "pendingToInvoice": 960,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 0,
+    "pendingCashReceipts": 0,
+    "asOf": "5/7/2026"
+  }
+}
