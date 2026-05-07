@@ -679,12 +679,17 @@ async function loadSeasons() {
   const sel = document.getElementById('season-select');
   if (!sel) return;
   try {
-    const r       = await fetch('/api/seasons');
-    const seasons = await r.json();
+    const [seasons, pkgs] = await Promise.all([
+      fetch('/api/seasons').then(r => r.json()),
+      fetchPkgsBySeason()
+    ]);
     if (seasons.error || !seasons.length) throw new Error(seasons.error || 'Sin temporadas');
 
-    selectedSeason = seasons[seasons.length - 1];   // más reciente
-    sel.innerHTML  =
+    // Last season with received packages, fallback to most recent
+    const lastWithPkgs = [...seasons].reverse().find(s => (pkgs[s] || 0) > 0);
+    selectedSeason = lastWithPkgs || seasons[seasons.length - 1];
+
+    sel.innerHTML =
       `<option value="__summary__">📊 Balance Total — Todas las Temporadas</option>` +
       `<option disabled>──────────────────────</option>` +
       seasons.map(s =>
@@ -927,11 +932,16 @@ function renderStatementBySeason(d) {
   const { seasons, data, concepts } = d;
 
   const fC = n => {
-    if (!n) return `<span class="rno">—</span>`;
+    if (n == null) return `<span class="rno">—</span>`;
     const s = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(n));
     return n < 0 ? `<span class="rn">(${s})</span>` : s;
   };
-  const fN = n => n ? Math.round(n).toLocaleString('en-US') : `<span class="rno">—</span>`;
+  const fCw = n => {
+    if (n == null) return `<span class="rno">—</span>`;
+    const s = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(n));
+    return n < 0 ? `(${s})` : s;
+  };
+  const fN = n => n != null ? Math.round(n).toLocaleString('en-US') : `<span class="rno">—</span>`;
 
   const get = (s, key) => {
     const sd = data[s];
@@ -1046,9 +1056,9 @@ function renderStatementBySeason(d) {
       const p   = pkgs[s] || 0;
       const pcBg    = isBalance ? 'rgba(0,0,0,.18)' : isTotal ? '#c8edce' : '#f8fafb';
       const pcColor = isBalance ? 'rgba(255,255,255,.8)' : isTotal ? '#166534' : '#64748b';
-      const td = isBalance ? `style="text-align:right;padding:10px 12px;font-family:monospace"` : `class="r"`;
+      const td = isBalance ? `style="text-align:right;padding:10px 12px;font-family:monospace;color:#fff;font-weight:800"` : `class="r"`;
       const pcVal = hasPc && p ? fmtUSD(v / p) : dash;
-      return `<td ${td}>${fmt(v)}</td>
+      return `<td ${td}>${isBalance ? fCw(v) : fmt(v)}</td>
               <td style="${pcCell(pcBg, pcColor)}">${pcVal}</td>`;
     }).join('');
 
@@ -1058,7 +1068,7 @@ function renderStatementBySeason(d) {
     const totPc    = hasPc && totalPkgs ? fmtUSD(tot / totalPkgs) : dash;
 
     const totTd = isBalance
-      ? `style="text-align:right;padding:10px 12px;font-family:monospace;font-weight:800;background:inherit"`
+      ? `style="text-align:right;padding:10px 12px;font-family:monospace;font-weight:800;background:inherit;color:#fff;font-weight:800"`
       : `style="text-align:right;font-family:monospace;font-weight:700;padding:7px 12px;background:${totBg}"`;
     const totPcTd = isBalance
       ? `style="${pcCell('rgba(0,0,0,.18)', 'rgba(255,255,255,.8)')}"`
@@ -1067,7 +1077,7 @@ function renderStatementBySeason(d) {
     return `<tr ${trStyle}>
       <td ${tdFirst}>${row.label}</td>
       ${cells}
-      <td ${totTd}>${fmt(tot)}</td>
+      <td ${totTd}>${isBalance ? fCw(tot) : fmt(tot)}</td>
       <td ${totPcTd}>${totPc}</td>
     </tr>`;
   }).join('');
@@ -1706,11 +1716,11 @@ function generateStatementBySeasonPDF() {
   const GREEN  = [27, 67, 50];
   const LGREEN = [216, 243, 220];
   const fC = n => {
-    if (!n) return '—';
+    if (n == null) return '—';
     const abs = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(n));
     return n < 0 ? `(${abs})` : abs;
   };
-  const fN = n => n ? Math.round(n).toLocaleString('en-US') : '—';
+  const fN = n => n != null ? Math.round(n).toLocaleString('en-US') : '—';
 
   withLogo(doc, 'Statement by Season', () => {
     const { seasons, data, concepts } = stmtBySeasonData;
@@ -1950,9 +1960,12 @@ function clearColFilters() {
 (function init() {
   const nav = document.getElementById('tabs');
   nav.innerHTML = MODS.map((m,i) =>
-    `<button class="tab${i===0?' active':''}" onclick="switchMod(${i})">${m.emoji} ${m.label}</button>`
+    `<button class="tab" onclick="switchMod(${i})">${m.emoji} ${m.label}</button>`
   ).join('');
-  switchMod(0);
+
+  const stmtIdx = MODS.findIndex(m => m.id === 'statement');
+  switchMod(stmtIdx >= 0 ? stmtIdx : 0);
+  // buildFilters() → loadSeasons() selects last season with packages and calls loadData()
 })();
 </script>
 </body>
