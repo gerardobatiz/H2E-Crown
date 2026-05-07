@@ -785,6 +785,11 @@ function renderStatement(d) {
   const pk = d.packages;
   const sl = d.sales;
 
+  const seasonEndYearStmt = s => { const p = String(s).trim().split('/'); return parseInt(p[p.length-1]); };
+  const isClosedStmt = seasonEndYearStmt(d.season) <= 2025;
+  const ajustesStmt  = isClosedStmt ? -d.balanceStd : 0;
+  const balanceFinal = d.balanceStd + ajustesStmt;
+
   const row = (label, std, cls='') =>
     `<tr class="${cls}"><td>${label}</td><td class="r">${std}</td></tr>`;
 
@@ -863,11 +868,24 @@ function renderStatement(d) {
     </table>
 
     <!-- BALANCE -->
-    <table class="stmt-tbl stmt-bal ${d.balanceStd >= 0 ? 'pos' : 'neg'}">
+    ${isClosedStmt ? `
+    <table class="stmt-tbl" style="margin-bottom:0">
       <tbody>
         <tr>
           <td style="width:55%">Balance</td>
           <td class="r" style="width:45%">${fmtC(d.balanceStd)}</td>
+        </tr>
+        <tr>
+          <td>Ajustes</td>
+          <td class="r">${fmtC(ajustesStmt)}</td>
+        </tr>
+      </tbody>
+    </table>` : ''}
+    <table class="stmt-tbl stmt-bal ${balanceFinal >= 0 ? 'pos' : 'neg'}">
+      <tbody>
+        <tr>
+          <td style="width:55%">${isClosedStmt ? 'Balance Final' : 'Balance'}</td>
+          <td class="r" style="width:45%">${fmtC(balanceFinal)}</td>
         </tr>
       </tbody>
     </table>
@@ -927,8 +945,12 @@ function renderStatementBySeason(d) {
   seasons.forEach(s => { pkgs[s] = data[s]?.pkgsTotal || 0; });
   const totalPkgs = seasons.reduce((a, s) => a + (pkgs[s] || 0), 0);
 
+  // Closed seasons (end year ≤ 2025): Ajustes brings their balance to zero
+  const seasonEndYear = s => { const p = String(s).trim().split('/'); return parseInt(p[p.length-1]); };
+  const isClosed = s => seasonEndYear(s) <= 2025;
+
   // Show $/caja only for USD rows that don't already represent a per-unit price
-  const showPc = row => row.fmt === 'usd' && !row.totFn;
+  const showPc = row => row.fmt === 'usd' && !row.totFn && !row.valFn;
   const dash = `<span class="rno">—</span>`;
   const PC_HDR  = `text-align:right;font-size:10px;color:#a7f3d0;min-width:70px;white-space:nowrap;letter-spacing:.2px`;
   const pcCell  = (bg, color) => `text-align:right;font-size:10px;color:${color};font-family:monospace;background:${bg};min-width:70px`;
@@ -965,7 +987,15 @@ function renderStatementBySeason(d) {
     { type:'data',    label:'Advances',                   key:'exp_Advances',     fmt:'usd', sub:true },
     { type:'total',   label:'Total Wires',                key:'wiresTotal',   fmt:'usd' },
 
-    { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires)', key:'balance', fmt:'usd' },
+    { type:'data',    label:'Ajustes',                   fmt:'usd',
+      valFn: s => isClosed(s) ? -(data[s]?.balance || 0) : 0 },
+
+    { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Ajustes)', fmt:'usd',
+      valFn: s => {
+        const bal = data[s]?.balance || 0;
+        return bal + (isClosed(s) ? -bal : 0);
+      }
+    },
   ];
 
   // All th sticky top so the header row stays visible during vertical scroll.
@@ -992,7 +1022,7 @@ function renderStatementBySeason(d) {
     }
 
     const fmt  = row.fmt === 'qty' ? fN : fC;
-    const vals = seasons.map(s => get(s, row.key));
+    const vals = row.valFn ? seasons.map(s => row.valFn(s)) : seasons.map(s => get(s, row.key));
     const tot  = row.totFn ? row.totFn(data) : vals.reduce((a, b) => a + b, 0);
     const hasPc = showPc(row);
 
@@ -1047,7 +1077,10 @@ function renderStatementBySeason(d) {
   const totNet = seasons.reduce((s, x) => s + (data[x]?.netSales   || 0), 0);
   const totExp = seasons.reduce((s, x) => s + (data[x]?.expTotal   || 0), 0);
   const totWir = seasons.reduce((s, x) => s + (data[x]?.wiresTotal || 0), 0);
-  const totBal = seasons.reduce((s, x) => s + (data[x]?.balance    || 0), 0);
+  const totBal = seasons.reduce((s, x) => {
+    const bal = data[x]?.balance || 0;
+    return s + bal + (isClosed(x) ? -bal : 0);
+  }, 0);
 
   document.getElementById('kpis').innerHTML = [
     kpiCard('Net Sales Total', fmtUSD(totNet), 'todas las temporadas'),
@@ -1689,6 +1722,9 @@ function generateStatementBySeasonPDF() {
       return sd[key] || 0;
     };
 
+    const pdfSeasonEndYear = s => { const p = String(s).trim().split('/'); return parseInt(p[p.length-1]); };
+    const pdfIsClosed = s => pdfSeasonEndYear(s) <= 2025;
+
     const ROWS = [
       { type:'section', label:'PACKAGES' },
       { type:'data',    label:'Pkgs Invoiced',         key:'pkgsInvoiced',    fmt:'qty' },
@@ -1714,7 +1750,10 @@ function generateStatementBySeasonPDF() {
       { type:'data',    label:'Pick & Pack',            key:'exp_Pick & Pack', fmt:'usd' },
       { type:'data',    label:'Advances',               key:'exp_Advances',    fmt:'usd' },
       { type:'total',   label:'Total Wires',            key:'wiresTotal',      fmt:'usd' },
-      { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires)', key:'balance', fmt:'usd' },
+      { type:'data',    label:'Ajustes',                fmt:'usd',
+        valFn: s => pdfIsClosed(s) ? -(data[s]?.balance || 0) : 0 },
+      { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Ajustes)', fmt:'usd',
+        valFn: s => { const b = data[s]?.balance||0; return b + (pdfIsClosed(s) ? -b : 0); } },
     ];
 
     const head = [['Concepto', ...seasons, 'Total']];
@@ -1730,7 +1769,7 @@ function generateStatementBySeasonPDF() {
       }
 
       const fmt      = row.fmt === 'qty' ? fN : fC;
-      const vals     = seasons.map(s => get(s, row.key));
+      const vals     = row.valFn ? seasons.map(s => row.valFn(s)) : seasons.map(s => get(s, row.key));
       const tot      = row.totFn ? row.totFn(data) : vals.reduce((a, b) => a + b, 0);
       const isTotal   = row.type === 'total';
       const isBalance = row.type === 'balance';

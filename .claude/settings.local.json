@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\" | Where-Object { $_.Name -ne \"node_modules\" } | Select-Object Name, LastWriteTime)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:3000/health\" -TimeoutSec 5 -ErrorAction SilentlyContinue)",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:3000/health\" -TimeoutSec 5; $r.Content } catch { \"Servidor no responde: $_\" })",
+      "PowerShell(Get-Process *)",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/adj-post-date?dFrom=1/1/2024&dTo=12/31/2025\" -UseBasicParsing; if \\($r.Count -gt 0\\) { $r[0] | ConvertTo-Json } else { \"Sin datos\" })",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/adj-post-date?dFrom=1/1/2020&dTo=12/31/2020\"; \"Registros 2020: $\\($r.Count\\)\"; if \\($r.Count -gt 0\\) { $r[0] | ConvertTo-Json })",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/adj-post-date?dFrom=1/1/2023&dTo=5/6/2026\"; \"Total: $\\($r.Count\\)\"; $r | Group-Object Season_Name | Select-Object Name, Count | Sort-Object Name)",
+      "PowerShell($r = Invoke-RestMethod \"http://localhost:3000/api/expenses?dFrom=1/1/2020&dTo=5/6/2026\"; $r | Group-Object Season_Name | Select-Object Name, Count, @{N='Total';E={\\($_.Group | Measure-Object Amount -Sum\\).Sum}} | Sort-Object Name | Format-Table -AutoSize)",
+      "PowerShell($r = Invoke-RestMethod \"http://localhost:3000/api/expenses?dFrom=1/1/2020&dTo=5/6/2026\"; $r | Group-Object Concept_Name | Select-Object Name, Count, @{N='Total';E={\\($_.Group | Measure-Object Amount -Sum\\).Sum}} | Sort-Object Total -Descending | Format-Table -AutoSize)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell($r = Invoke-RestMethod \"http://localhost:3000/api/expenses-by-season\"; $r.rows | Select-Object concept, total | Sort-Object total -Descending | Format-Table -AutoSize)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\public\" -Force; Get-ChildItem \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\" -Force | Where-Object { $_.Extension -match \"\\\\.\\(png|jpg|jpeg|svg|gif|webp\\)$\" })",
+      "PowerShell(cmd /c \"dir /s /b \"\"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\"\" 2>nul | findstr /i \"\".png .jpg .jpeg .svg .gif .webp\"\"\")",
+      "PowerShell(cmd /c \"dir /s /b C:\\\\Users\\\\OFFICE` DEPOT 2>nul\" | Where-Object { $_ -match \"\\\\.\\(png|jpg|jpeg|svg\\)$\" -and $_ -notmatch \"AppData|node_modules|Cache\" } | Select-Object -First 20)",
+      "PowerShell(Get-ChildItem *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\OFFICE DEPOT\\\\Desktop\" -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @\\('.png','.jpg','.jpeg','.svg'\\) } | Select-Object Name, FullName, Length)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\OFFICE DEPOT\\\\OneDrive\" -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in @\\('.png','.jpg','.jpeg','.svg'\\) -and $_.Name -match 'h2e|logo|H2E|Logo|crown|Crown' } | Select-Object Name, FullName, LastWriteTime)",
+      "PowerShell(Copy-Item *)",
+      "PowerShell($r = Invoke-RestMethod \"http://localhost:3000/api/statement-by-season\"; \"Temporadas: $\\($r.seasons.Count\\)\"; $r.seasons)",
+      "PowerShell(Get-Item *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(Receive-Job *)",
+      "PowerShell(Get-Job *)",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/statement?season=2025/2026\" -ErrorAction SilentlyContinue; if \\($r\\) { Write-Host \"suppAsOf: $\\($r.suppAsOf\\)\"; Write-Host \"sentToRepack: $\\($r.packages.sentToRepackStd\\)\"; Write-Host \"receivedFromRepack: $\\($r.packages.receivedFromRepackStd\\)\"; Write-Host \"dumped: $\\($r.packages.dumpedStd\\)\"; Write-Host \"pendingCash: $\\($r.sales.pendingCashReceipts\\)\" } else { Write-Host \"No response\" })",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/statement?season=2025/2026\" -ErrorAction SilentlyContinue; Write-Host \"receivedStd: $\\($r.packages.receivedStd\\)\"; Write-Host \"pkgsInvoicedStd \\(spQtyS\\): $\\($r.packages.pkgsInvoicedStd\\)\"; Write-Host \"pendingToInvoice \\(invQty\\): $\\($r.packages.pendingToInvoiceStd\\)\"; Write-Host \"shippedStd \\(ssQtyS\\): $\\($r.packages.shippedStd\\)\")",
+      "PowerShell($now = Get-Date; $dTo = \"$\\($now.Month\\)/$\\($now.Day\\)/$\\($now.Year\\)\"; $inv = Invoke-RestMethod -Uri \"http://localhost:3000/api/inventory?dAsOf=$dTo\" -ErrorAction SilentlyContinue; $s26 = $inv | Where-Object { $_.'Season_Name' -eq '2025/2026' }; Write-Host \"2025/2026 inventory rows: $\\($s26.Count\\)\"; Write-Host \"Total Qty: $\\(\\($s26 | Measure-Object -Property Qty -Sum\\).Sum\\)\")",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://localhost:3000/api/statement?season=2025/2026\"; Write-Host \"receivedStd: $\\($r.packages.receivedStd\\)\"; Write-Host \"pkgsInvoicedStd: $\\($r.packages.pkgsInvoicedStd\\)\"; Write-Host \"pendingToInvoiceStd: $\\($r.packages.pendingToInvoiceStd\\)\")",
+      "PowerShell(Start-Sleep -Seconds 5; $r = Invoke-RestMethod -Uri \"http://localhost:3000/api/statement?season=2025/2026\" -TimeoutSec 40; Write-Host \"receivedStd: $\\($r.packages.receivedStd\\)\"; Write-Host \"pkgsInvoicedStd: $\\($r.packages.pkgsInvoicedStd\\)\"; Write-Host \"pendingToInvoiceStd: $\\($r.packages.pendingToInvoiceStd\\)\")",
+      "PowerShell(netstat *)",
+      "PowerShell(cd \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\"; $proc = Start-Process -FilePath \"node\" -ArgumentList \"server.js\" -WorkingDirectory \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\" -RedirectStandardError \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\server-err.log\" -RedirectStandardOutput \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\server-out.log\" -PassThru -NoNewWindow; Start-Sleep -Seconds 8; Write-Host \"Still running: $\\(-not $proc.HasExited\\)\"; Get-Content \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\server-out.log\" -ErrorAction SilentlyContinue; Get-Content \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\server-err.log\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\" -File | Where-Object { $_.Name -notmatch 'node_modules|package|server|generate|README|H2E_Sales' } | Select-Object Name, LastWriteTime | Sort-Object LastWriteTime -Descending)",
+      "PowerShell(Get-ChildItem -LiteralPath \"C:\\\\Users\\\\OFFICE DEPOT\\\\iSolve-Dashboard\\\\Imágenes para Claude\" | ForEach-Object { \"$\\($_.LastWriteTime\\)  $\\($_.Name\\)\" })",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://127.0.0.1:3000/api/statement-by-season\" -TimeoutSec 40; $s = \"2024/2025\"; $d = $r.data.\"2024/2025\"; Write-Host \"expTotal: $\\($d.expTotal\\)\"; Write-Host \"wiresTotal: $\\($d.wiresTotal\\)\"; Write-Host \"netSales: $\\($d.netSales\\)\"; Write-Host \"balance: $\\($d.balance\\)\"; Write-Host \"---expenses keys---\"; $d.expenses.PSObject.Properties | ForEach-Object { Write-Host \"'$\\($_.Name\\)' = $\\($_.Value\\)\" })"
+    ]
+  }
+}
