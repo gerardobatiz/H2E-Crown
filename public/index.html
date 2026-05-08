@@ -382,7 +382,7 @@ function buildFilters() {
   let h = '';
 
   // Selector de temporada rápido para módulos con fechas
-  const hasDateFilter = ['range','range-concept','expenses-season','adj-report','asof'].includes(m.ft);
+  const hasDateFilter = ['range','range-concept','expenses-season','adj-report'].includes(m.ft);
   if (hasDateFilter) {
     const selStyle = `padding:7px 10px;border:2px solid var(--gm);border-radius:7px;font-size:13px;
                       font-weight:600;color:var(--gd);background:var(--card);cursor:pointer;
