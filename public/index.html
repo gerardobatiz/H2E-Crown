@@ -265,6 +265,11 @@ const fmtNum = n => new Intl.NumberFormat('en-US').format(Math.round(n));
 
 // ── Module Config ─────────────────────────────────────────────────────────────
 const MODS = [
+  { id:'statement',   label:'GWR Statement',        emoji:'📊',
+    ep:'/api/statement',        ft:'statement',
+    amt:[], qty:[],
+    desc:'Consolidated Grower Statement from all 6 APIs' },
+
   { id:'sales-ship',  label:'Sales / Ship Date',    emoji:'🚢',
     ep:'/api/sales-ship-date',  ft:'range',
     defFrom: '1/1/2015', defTo: today,
@@ -317,10 +322,10 @@ const MODS = [
     amt:[], qty:[],
     desc:'GWR Statement pivot — filas = líneas del statement, columnas = temporadas' },
 
-  { id:'statement',   label:'GWR Statement',        emoji:'📊',
-    ep:'/api/statement',        ft:'statement',
+  { id:'sales-season', label:'Sales by Season',     emoji:'📊',
+    ep:'/api/statement-by-season', ft:'none',
     amt:[], qty:[],
-    desc:'Consolidated Grower Statement from all 6 APIs' },
+    desc:'Sales pivot — rows = seasons, columns = sales metrics' },
 ];
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -335,6 +340,7 @@ let pivotData         = null;
 let pivotSortCol      = 'total';
 let pivotSortDir      = -1;
 let stmtBySeasonData  = null;
+let salesBySeasonData = null;
 let lastStatementData = null;
 let labelFilter       = '';
 let columnFilters     = {};
@@ -455,6 +461,8 @@ async function loadData() {
       `Last updated: ${new Date().toLocaleTimeString('en-US')}`;
     if (m.id === 'stmt-by-season') {
       renderStatementBySeason(data);
+    } else if (m.id === 'sales-season') {
+      renderSalesBySeason(data);
     } else if (m.ft === 'statement') {
       renderStatement(data);
     } else if (m.ft === 'expenses-season') {
@@ -1024,10 +1032,11 @@ function renderStatementBySeason(d) {
 
   const body = ROWS.map(row => {
     if (row.type === 'section') {
-      return `<tr style="background:var(--gd);color:#fff">
-        <td colspan="${totalCols}"
-            style="padding:8px 14px;font-weight:800;font-size:11px;letter-spacing:.8px;
-                   position:sticky;left:0;background:var(--gd)">${row.label}</td>
+      return `<tr>
+        <td class="sec-hdr" style="padding:8px 14px;font-weight:800;font-size:11px;
+                                   letter-spacing:.8px;white-space:nowrap;color:#fff;
+                                   position:sticky;left:0;z-index:4;background:var(--gd)">${row.label}</td>
+        <td class="sec-fill" colspan="${totalCols - 1}" style="background:var(--gd);position:sticky;z-index:3"></td>
       </tr>`;
     }
 
@@ -1084,6 +1093,15 @@ function renderStatementBySeason(d) {
 
   setBody(`<table style="width:100%;border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table>`);
 
+  // Pin section headers (PACKAGES, SALES…) just below the sticky column-header row
+  requestAnimationFrame(() => {
+    const wrap  = document.getElementById('twrap');
+    const thead = wrap?.querySelector('thead');
+    if (!thead) return;
+    const hh = thead.offsetHeight + 'px';
+    wrap.querySelectorAll('.sec-hdr, .sec-fill').forEach(td => { td.style.top = hh; });
+  });
+
   const totNet = seasons.reduce((s, x) => s + (data[x]?.netSales   || 0), 0);
   const totExp = seasons.reduce((s, x) => s + (data[x]?.expTotal   || 0), 0);
   const totWir = seasons.reduce((s, x) => s + (data[x]?.wiresTotal || 0), 0);
@@ -1101,6 +1119,92 @@ function renderStatementBySeason(d) {
 
   setSL(`${seasons.length} temporadas · ${concepts.length} conceptos`);
   setSR(`Balance Total: ${fmtUSD(totBal)}`);
+}
+
+// ── Sales by Season (seasons as rows, metrics as columns) ────────────────────
+function renderSalesBySeason(d) {
+  if (!d || d.error) {
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'Sin datos'}</div>`);
+    setSL('Error'); setSR(''); return;
+  }
+
+  salesBySeasonData = d;
+  const { seasons, data } = d;
+
+  const fC = n => {
+    if (n == null) return `<span class="rno">—</span>`;
+    const s = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(n));
+    return n < 0 ? `<span class="rn">(${s})</span>` : s;
+  };
+  const fN = n => n != null ? Math.round(n).toLocaleString('en-US') : `<span class="rno">—</span>`;
+  const pct = (a, b) => b ? `<span style="font-size:10px;color:#64748b">${(a/b*100).toFixed(1)}%</span>` : `<span class="rno">—</span>`;
+
+  const totPkgs  = seasons.reduce((a, s) => a + (data[s]?.pkgsTotal  || 0), 0);
+  const totGross = seasons.reduce((a, s) => a + (data[s]?.salesGross || 0), 0);
+  const totAdj   = seasons.reduce((a, s) => a + (data[s]?.adjAmt    || 0), 0);
+  const totNet   = seasons.reduce((a, s) => a + (data[s]?.netSales  || 0), 0);
+
+  const thS  = `position:sticky;top:0;z-index:2;background:var(--gd)`;
+  const thPC = `text-align:right;font-size:10px;color:#a7f3d0;min-width:80px;white-space:nowrap;${thS};background:#0b2e19`;
+
+  const head = `<tr>
+    <th style="text-align:left;min-width:115px;position:sticky;left:0;top:0;z-index:5;background:var(--gd)">Season</th>
+    <th style="text-align:right;min-width:95px;${thS}">Pkgs</th>
+    <th style="text-align:right;min-width:130px;${thS}">Gross Sales</th>
+    <th style="${thPC}">$/caja</th>
+    <th style="text-align:right;min-width:130px;${thS}">Adjustments</th>
+    <th style="text-align:right;min-width:75px;${thS}">Adj %</th>
+    <th style="text-align:right;min-width:130px;${thS}">Net Sales</th>
+    <th style="${thPC}">$/caja Net</th>
+  </tr>`;
+
+  const pcCell = `text-align:right;font-size:10px;font-family:monospace;color:#64748b;background:#f8fafb`;
+
+  const rows = seasons.map(s => {
+    const sd    = data[s] || {};
+    const pkgs  = sd.pkgsTotal  || 0;
+    const gross = sd.salesGross || 0;
+    const adj   = sd.adjAmt    || 0;
+    const net   = sd.netSales  || 0;
+    return `<tr>
+      <td style="font-weight:600;position:sticky;left:0;z-index:1;background:#fff">${s}</td>
+      <td class="r">${fN(pkgs)}</td>
+      <td class="r">${fC(gross)}</td>
+      <td style="${pcCell}">${pkgs ? fmtUSD(gross/pkgs) : '<span class="rno">—</span>'}</td>
+      <td class="r">${fC(adj)}</td>
+      <td style="text-align:right;padding:7px 12px">${pct(adj, gross)}</td>
+      <td class="r">${fC(net)}</td>
+      <td style="${pcCell}">${pkgs ? fmtUSD(net/pkgs) : '<span class="rno">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const totPcGross = `text-align:right;font-size:10px;font-family:monospace;color:#166534;background:#c8edce`;
+  const totRow = `<tr style="background:var(--gp);font-weight:700">
+    <td style="font-weight:800;position:sticky;left:0;z-index:1;background:var(--gp)">TOTAL</td>
+    <td class="r">${fN(totPkgs)}</td>
+    <td class="r">${fC(totGross)}</td>
+    <td style="${totPcGross}">${totPkgs ? fmtUSD(totGross/totPkgs) : '—'}</td>
+    <td class="r">${fC(totAdj)}</td>
+    <td style="text-align:right;padding:7px 12px;background:var(--gp)">${pct(totAdj, totGross)}</td>
+    <td class="r">${fC(totNet)}</td>
+    <td style="${totPcGross}">${totPkgs ? fmtUSD(totNet/totPkgs) : '—'}</td>
+  </tr>`;
+
+  setBody(`<table style="width:100%;border-collapse:collapse">
+    <thead>${head}</thead>
+    <tbody>${rows}${totRow}</tbody>
+  </table>`);
+
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Total Pkgs',   fmtNum(totPkgs),  'todas las temporadas'),
+    kpiCard('Gross Sales',  fmtUSD(totGross), 'ventas brutas'),
+    kpiCard('Adjustments',  fmtUSD(totAdj),   `${totGross ? (totAdj/totGross*100).toFixed(1)+'%' : '—'} de ventas brutas`),
+    kpiCard('Net Sales',    fmtUSD(totNet),   'ventas netas'),
+    kpiCard('$/caja (Net)', totPkgs ? fmtUSD(totNet/totPkgs) : '—', 'precio promedio neto'),
+  ].join('');
+
+  setSL(`${seasons.length} temporadas`);
+  setSR(`Net Sales: ${fmtUSD(totNet)}`);
 }
 
 // ── GWR Expenses x Temporada (pivot) ─────────────────────────────────────────
@@ -1475,11 +1579,14 @@ function renderAdjReport(data) {
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
 function exportPDF() {
-  const id = MODS[mIdx].id;
-  if      (id === 'stmt-by-season')  generateStatementBySeasonPDF();
-  else if (id === 'expenses-season') generateExpensesBySeasonPDF();
-  else if (id === 'statement')       generateStatementPDF();
-  else                               generateTablePDF();
+  const id  = MODS[mIdx].id;
+  const qs  = buildQS();
+  const q   = qs ? '?' + qs : '';
+  if      (id === 'sales-season')    window.open('/report/sales-by-season', '_blank');
+  else if (id === 'stmt-by-season')  window.open('/report/stmt-by-season', '_blank');
+  else if (id === 'expenses-season') window.open('/report/expenses-season' + q, '_blank');
+  else if (id === 'statement')       window.open('/report/statement' + q, '_blank');
+  else                               window.open('/report/' + id + q, '_blank');
 }
 
 function withLogo(doc, title, callback) {
@@ -1814,6 +1921,11 @@ function generateStatementBySeasonPDF() {
     pdfFooter(doc);
     doc.save(`H2E_Statement_by_Season_${new Date().toISOString().slice(0, 10)}.pdf`);
   });
+}
+
+// Sales by Season PDF — uses server-side PDFKit generator (generate-pdf.js)
+function generateSalesBySeasonPDF() {
+  window.open('/report/sales-by-season', '_blank');
 }
 
 // ── Season Pills ──────────────────────────────────────────────────────────────

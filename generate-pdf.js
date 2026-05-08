@@ -137,4 +137,8 @@ async function generate() {
 }
 
 module.exports = { buildPDF, COLS };
-generate().catch(err => { console.error('Error:', err.message); process.exit(1); });
+
+// Run standalone: node generate-pdf.js
+if (require.main === module) {
+  generate().catch(err => { console.error('Error:', err.message); process.exit(1); });
+}

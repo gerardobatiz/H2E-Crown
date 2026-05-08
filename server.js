@@ -551,6 +551,79 @@ app.get('/report/sales-by-season', async (req, res) => {
   }
 });
 
+// ── Dashboard-style PDF routes ────────────────────────────────────────────────
+{
+  const PDFDocument = require('pdfkit');
+  const pdfGen      = require('./pdf-generators');
+
+  const mkPDF = (res, fname, layout, buildFn) => {
+    const doc = new PDFDocument({ size: 'LETTER', layout,
+      margins: { top: 40, bottom: 40, left: 36, right: 36 } });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}.pdf"`);
+    doc.pipe(res);
+    buildFn(doc);
+  };
+
+  const selfGet = url =>
+    axios.get(`http://localhost:${PORT}${url}`, { httpsAgent: agent, timeout: 30000 });
+
+  // Flat table modules
+  for (const [id, cfg] of Object.entries(pdfGen.FLAT)) {
+    const apiEp = pdfGen.FLAT_API[id];
+    app.get(`/report/${id}`, async (req, res) => {
+      try {
+        const qs  = new URLSearchParams(req.query).toString();
+        const { data } = await selfGet(apiEp + (qs ? '?' + qs : ''));
+        const rows = Array.isArray(data) ? data : [];
+        if (!rows.length) return res.status(204).end();
+        const cols   = Object.keys(rows[0]);
+        const layout = cols.length > 6 ? 'landscape' : 'portrait';
+        let subtitle = '';
+        if (req.query.dFrom) subtitle = `${req.query.dFrom} – ${req.query.dTo || 'today'}`;
+        else if (req.query.dAsOf) subtitle = `As of: ${req.query.dAsOf}`;
+        const fname = `H2E_${id}_${new Date().toISOString().slice(0, 10)}`;
+        mkPDF(res, fname, layout, doc =>
+          pdfGen.buildFlatTablePDF(doc, { title: cfg.title, subtitle, cols, rows,
+            amtCols: cfg.amtCols, numCols: cfg.numCols }));
+      } catch (err) {
+        console.error('PDF error:', err.message);
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
+
+  // Statement by Season
+  app.get('/report/stmt-by-season', async (req, res) => {
+    try {
+      const { data } = await selfGet('/api/statement-by-season');
+      const fname = `H2E_Statement_by_Season_${new Date().toISOString().slice(0, 10)}`;
+      mkPDF(res, fname, 'landscape', doc => pdfGen.buildStatementBySeasonPDF(doc, data));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Expenses by Season
+  app.get('/report/expenses-season', async (req, res) => {
+    try {
+      const qs = new URLSearchParams(req.query).toString();
+      const { data } = await selfGet('/api/expenses-by-season' + (qs ? '?' + qs : ''));
+      const fname = `H2E_Expenses_by_Season_${new Date().toISOString().slice(0, 10)}`;
+      mkPDF(res, fname, 'landscape', doc => pdfGen.buildExpensesBySeasonPDF(doc, data));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // GWR Statement (single season)
+  app.get('/report/statement', async (req, res) => {
+    try {
+      const qs = new URLSearchParams(req.query).toString();
+      const { data } = await selfGet('/api/statement' + (qs ? '?' + qs : ''));
+      const season = (req.query.season || 'season').replace(/\//g, '-');
+      const fname  = `H2E_GWR_Statement_${season}_${new Date().toISOString().slice(0, 10)}`;
+      mkPDF(res, fname, 'portrait', doc => pdfGen.buildGWRStatementPDF(doc, data));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+}
+
 app.listen(PORT, () => {
   console.log(`\n  ✅  iSolve Dashboard  →  http://localhost:${PORT}\n`);
 });
