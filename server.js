@@ -501,16 +501,32 @@ app.get('/api/adj-season-report', async (req, res) => {
     calls.push({ year: y, url: `GrwAdjByPostDateAPI.aspx?dFrom=${yFrom}&dTo=${yTo}` });
   }
 
-  const chunks = await Promise.all(
-    calls.map(({ year, url }) =>
-      axios.get(`${BASE_URL}/${url}`, opts)
-        .then(r => (Array.isArray(r.data) ? r.data : [])
-          .filter(rec => rec['Season_Name'] && rec['Season_Name'] !== 'No Data')
-          .map(rec => ({ ...rec, Año_Post: year }))
-        )
-        .catch(() => [])
-    )
-  );
+  const shipFrom = `1/1/${fromYear - 1}`;
+
+  const [chunks, shipRaw] = await Promise.all([
+    Promise.all(
+      calls.map(({ year, url }) =>
+        axios.get(`${BASE_URL}/${url}`, opts)
+          .then(r => (Array.isArray(r.data) ? r.data : [])
+            .filter(rec => rec['Season_Name'] && rec['Season_Name'] !== 'No Data')
+            .map(rec => ({ ...rec, Año_Post: year }))
+          )
+          .catch(() => [])
+      )
+    ),
+    axios.get(`${BASE_URL}/GrwNetSalesByShipDateAPI.aspx?dFrom=${shipFrom}&dTo=${dTo}`, opts)
+      .then(r => Array.isArray(r.data) ? r.data : [])
+      .catch(() => [])
+  ]);
+
+  const shipMap = {};
+  for (const rec of shipRaw) {
+    const ord = rec['Order_No.'];
+    if (ord && rec['Ship_Date'] && !shipMap[ord]) {
+      const d = new Date(rec['Ship_Date']);
+      shipMap[ord] = `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+    }
+  }
 
   const seasonEndYear = name => {
     const parts = String(name).trim().split(/[-\/]/);
@@ -520,11 +536,12 @@ app.get('/api/adj-season-report', async (req, res) => {
   };
 
   const all = chunks.flat().map(r => {
-    const sName  = renameSeason(r['Season_Name']);
-    const postY  = r['Año_Post'];
-    const sEndY  = seasonEndYear(r['Season_Name']);
-    const fuera  = postY > sEndY;
-    return { ...r, Season_Name: sName, Año_Fin_Temp: sEndY, Fuera_Temporada: fuera ? 'Sí' : 'No' };
+    const sName   = renameSeason(r['Season_Name']);
+    const postY   = r['Año_Post'];
+    const sEndY   = seasonEndYear(sName);
+    const fuera   = postY > sEndY;
+    const shipDate = shipMap[r['Order_No.']] || null;
+    return { ...r, Season_Name: sName, Año_Fin_Temp: shipDate || sEndY, Fuera_Temporada: fuera ? 'Sí' : 'No' };
   });
 
   res.json(all);

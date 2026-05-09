@@ -1512,8 +1512,8 @@ function renderAdjReport(data) {
 
   const thLabel = c => {
     const si = `<span class="si">${sCol===c?(sDir===1?'↑':'↓'):'↕'}</span>`;
-    if (c === COL_POST) return `Año Ajuste${si}`;
-    if (c === COL_ENDY) return `Año Fin Temp.${si}`;
+    if (c === COL_POST) return `Fecha de Ajuste${si}`;
+    if (c === COL_ENDY) return `Fecha de Embarque${si}`;
     if (c === COL_FLAG) return `Fuera Temporada${si}`;
     return `${c}${si}`;
   };
@@ -1551,7 +1551,7 @@ function renderAdjReport(data) {
       <span><strong>Total ajustes:</strong> ${data.length}</span>
       <span style="color:#16a34a;font-weight:600">✓ Dentro de temporada: ${dentro.length}</span>
       <span style="color:#ef4444;font-weight:700">⚠️ Fuera de temporada: ${fuera.length}</span>
-      <span style="color:#64748b;font-size:11px">Año_Post = año en que se procesó el ajuste &nbsp;|&nbsp; Año_Fin_Temp = último año de la temporada del producto</span>
+      <span style="color:#64748b;font-size:11px">Fecha de Embarque = último año de la temporada del producto &nbsp;|&nbsp; Fecha de Ajuste = año en que se procesó el ajuste</span>
     </div>`;
 
   setBody(infoBar + `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`);

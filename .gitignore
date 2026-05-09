@@ -1,0 +1,4 @@
+node_modules/
+monitor-config.json
+monitor-snapshot.json
+monitor-log.txt

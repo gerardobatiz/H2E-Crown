@@ -64,7 +64,15 @@
     "asOf": "4/10/2026"
   },
   "2026": {
-    "pendingToInvoice": 960,
+    "pendingToInvoice": 0,
+    "sentToRepack": 0,
+    "receivedFromRepack": 0,
+    "dumped": 0,
+    "pendingCashReceipts": 13471.97,
+    "asOf": "5/8/2026"
+  },
+  "2026/2027": {
+    "pendingToInvoice": 0,
     "sentToRepack": 0,
     "receivedFromRepack": 0,
     "dumped": 0,
