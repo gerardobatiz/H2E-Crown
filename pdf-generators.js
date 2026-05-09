@@ -48,14 +48,15 @@ function drawFooter(doc) {
 }
 
 // ── Generic flat-table PDF ────────────────────────────────────────────────────
-function buildFlatTablePDF(doc, { title, subtitle = '', cols, rows, amtCols = [], numCols = [] }) {
-  const amtSet = new Set(amtCols);
-  const numSet = new Set(numCols);
-  const W      = doc.page.width;
-  const availW = W - M * 2;
+function buildFlatTablePDF(doc, { title, subtitle = '', cols, rows, amtCols = [], numCols = [], shortCols = [] }) {
+  const amtSet   = new Set(amtCols);
+  const numSet   = new Set(numCols);
+  const shortSet = new Set(shortCols);
+  const W        = doc.page.width;
+  const availW   = W - M * 2;
 
-  // Widths: usd=60pt, num=42pt, text splits remainder
-  const raw   = cols.map(c => amtSet.has(c) ? 60 : numSet.has(c) ? 42 : 0);
+  // Widths: usd=60pt, num=36pt, short=38pt (left-aligned fixed), text splits remainder
+  const raw   = cols.map(c => amtSet.has(c) ? 60 : numSet.has(c) ? 36 : shortSet.has(c) ? 38 : 0);
   const fixed = raw.reduce((s, w) => s + w, 0);
   const textN = raw.filter(w => w === 0).length;
   const textW = textN > 0 ? Math.max(28, (availW - fixed) / textN) : 0;
@@ -109,8 +110,8 @@ function buildFlatTablePDF(doc, { title, subtitle = '', cols, rows, amtCols = []
       const val   = fmtVal(col, v);
       const color = (amtSet.has(col) && typeof v === 'number' && v < 0) ? C.red
                   : first ? C.green : C.text;
-      doc.font(first ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor(color)
-         .text(val, x + 4, curY + (ROW_H - 8) / 2,
+      doc.font(first ? 'Helvetica-Bold' : 'Helvetica').fontSize(7).fillColor(color)
+         .text(val, x + 4, curY + (ROW_H - 7) / 2,
                { width: cw[ci] - 8, align: isRight(col) ? 'right' : 'left', lineBreak: false });
       x += cw[ci];
     });
@@ -127,7 +128,7 @@ function buildFlatTablePDF(doc, { title, subtitle = '', cols, rows, amtCols = []
       doc.rect(x, curY, cw[ci], ROW_H + 2).fill(C.green);
       const val = ci === 0 ? 'TOTAL'
                 : totals[col] != null ? fC(totals[col]) : '';
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(C.white)
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor(C.white)
          .text(val, x + 4, curY + (ROW_H - 6) / 2,
                { width: cw[ci] - 8, align: ci === 0 ? 'left' : 'right', lineBreak: false });
       x += cw[ci];
@@ -190,7 +191,7 @@ function buildStatementBySeasonPDF(doc, { seasons, data, concepts }) {
     { type: 'data',  label: '  Pick & Pack',        key: 'exp_Pick & Pack', fmt: 'usd', sub: true },
     { type: 'data',  label: '  Advances',           key: 'exp_Advances',    fmt: 'usd', sub: true },
     { type: 'total', label: 'Total Wires',          key: 'wiresTotal',      fmt: 'usd' },
-    { type: 'data',  label: 'Ajustes', fmt: 'usd',
+    { type: 'data',  label: 'Adjustments', fmt: 'usd',
       valFn: s => isClosed(s) ? -(data[s]?.balance || 0) : 0 },
     { type: 'balance', label: 'BALANCE', fmt: 'usd',
       valFn: s => { const b = data[s]?.balance || 0; return b + (isClosed(s) ? -b : 0); } },
@@ -198,7 +199,7 @@ function buildStatementBySeasonPDF(doc, { seasons, data, concepts }) {
 
   const drawHead = y => {
     let x = M;
-    ['Concepto', ...seasons, 'Total'].forEach((col, i) => {
+    ['Concept', ...seasons, 'Total'].forEach((col, i) => {
       const w  = fw[i];
       const bg = i === seasons.length + 1 ? '#0d3321' : C.green;
       doc.rect(x, y, w, HEAD_H).fill(bg);
@@ -490,7 +491,7 @@ function buildGWRStatementPDF(doc, d) {
   rowIdx = 0;
   if (isClosed) {
     curY = drawRow(curY, 'Balance (Net Sales − Expenses)', [fC(d.balanceStd)]);
-    curY = drawRow(curY, 'Ajustes',                        [fC(ajustes)],        { isSub: true });
+    curY = drawRow(curY, 'Adjustments',                    [fC(ajustes)],        { isSub: true });
   }
 
   const balLabel = isClosed ? 'Balance Final' : 'Balance';
@@ -514,7 +515,7 @@ const FLAT = {
   'inventory':  { title: 'Inventory',           amtCols: ['Gross_Amount', 'Gross Amount'], numCols: ['Qty'] },
   'adj-post':   { title: 'Adj / Post Date',     amtCols: ['Amount', 'Adj_Amt'],           numCols: [] },
   'pend-adj':   { title: 'Pending Adjustments', amtCols: ['Pend_Adj_Amount', 'Adj_Amt'],  numCols: ['Pend_Adj_Pkgs'] },
-  'adj-report': { title: 'Reporte de Ajustes',  amtCols: ['Amount', 'Adj_Amt'],           numCols: [] },
+  'adj-report': { title: 'Adj Report',           amtCols: ['Amount', 'Adj_Amt'],           numCols: [] },
 };
 
 const FLAT_API = {

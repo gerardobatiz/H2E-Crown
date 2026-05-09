@@ -106,6 +106,7 @@ main { padding: 20px 24px; }
 table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 thead { z-index: 2; }
 th {
+  position: sticky; top: 0; z-index: 2;
   background: var(--gd); color: #fff; padding: 9px 12px;
   text-align: left; font-weight: 600; white-space: nowrap;
   cursor: pointer; user-select: none;
@@ -309,18 +310,18 @@ const MODS = [
     ep:'/api/expenses-by-season', ft:'expenses-season',
     defFrom: '1/1/2015', defTo: today,
     amt:[], qty:[],
-    desc:'GWR Expenses pivot por concepto y temporada' },
+    desc:'GWR Expenses pivot by concept and season' },
 
-  { id:'adj-report',  label:'Reporte de Ajustes',   emoji:'📅',
+  { id:'adj-report',  label:'Adj Report',            emoji:'📅',
     ep:'/api/adj-season-report', ft:'adj-report',
     defFrom: '1/1/2015', defTo: today,
     amt:['Amount','Adj_Amt'], qty:[],
-    desc:'Ajustes con año de posteo y bandera fuera de temporada' },
+    desc:'Adjustments with post year and out-of-season flag' },
 
   { id:'stmt-by-season', label:'Statement by Season', emoji:'📈',
     ep:'/api/statement-by-season', ft:'none',
     amt:[], qty:[],
-    desc:'GWR Statement pivot — filas = líneas del statement, columnas = temporadas' },
+    desc:'GWR Statement pivot — rows = statement lines, columns = seasons' },
 
   { id:'sales-season', label:'Sales by Season',     emoji:'📊',
     ep:'/api/statement-by-season', ft:'none',
@@ -389,9 +390,9 @@ function buildFilters() {
                       outline:none;min-width:150px;appearance:none;
                       background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232d6a4f' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
                       background-repeat:no-repeat;background-position:right 8px center;padding-right:28px`;
-    h += fg('📅 Temporada',
+    h += fg('📅 Season',
       `<select id="fSeasonJump" onchange="jumpToSeason(this.value)" style="${selStyle}">
-         <option value="">— Seleccionar —</option>
+         <option value="">— Select —</option>
        </select>`);
     h += `<div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>`;
   }
@@ -402,15 +403,16 @@ function buildFilters() {
     if (m.ft === 'range-concept')
       h += fg('Concept (optional)', `<input type="text" id="fConcept" placeholder="All" style="width:120px">`);
   } else if (m.ft === 'expenses-season') {
-    h += fg('Desde', `<input type="date" id="fFrom" value="${toIso(m.defFrom||'1/1/2015')}">`);
-    h += fg('Hasta', `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+    h += fg('From', `<input type="date" id="fFrom" value="${toIso(m.defFrom||'1/1/2015')}">`);
+    h += fg('To',   `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
   } else if (m.ft === 'adj-report') {
-    h += fg('Fecha Ajuste Desde', `<input type="date" id="fFrom" value="${toIso(m.defFrom||fy)}">`);
-    h += fg('Fecha Ajuste Hasta', `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+    h += fg('Adj. Date From', `<input type="date" id="fFrom" value="${toIso(m.defFrom||fy)}">`);
+    h += fg('Adj. Date To',   `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+    h += fg('Min. Days', `<input type="number" id="fMinDias" min="0" placeholder="All" style="width:80px" oninput="applyRender()">`);
   } else if (m.ft === 'asof') {
     h += fg('As-Of Date', `<input type="date" id="fAsOf" value="${toIso(m.defAsOf||today)}">`);
   } else if (m.ft === 'statement') {
-    h += fg('Temporada', `<select id="season-select" onchange="selectSeason(this.value)"><option disabled selected>Cargando…</option></select>`);
+    h += fg('Season', `<select id="season-select" onchange="selectSeason(this.value)"><option disabled selected>Loading…</option></select>`);
   } else {
     h += `<span style="color:var(--muted);font-size:13px">📡 ${m.desc} — loads all available data automatically</span>`;
   }
@@ -505,6 +507,10 @@ function applyRender() {
 
   for (const [col, val] of Object.entries(columnFilters))
     if (val) view = view.filter(r => String(r[col] ?? '') === val);
+
+  const minDias = parseInt(document.getElementById('fMinDias')?.value);
+  if (!isNaN(minDias) && minDias > 0)
+    view = view.filter(r => typeof r['Dias'] === 'number' && r['Dias'] >= minDias);
 
   if (sCol !== null && view.length) {
     view.sort((a, b) => {
@@ -691,14 +697,14 @@ async function loadSeasons() {
       fetch('/api/seasons').then(r => r.json()),
       fetchPkgsBySeason()
     ]);
-    if (seasons.error || !seasons.length) throw new Error(seasons.error || 'Sin temporadas');
+    if (seasons.error || !seasons.length) throw new Error(seasons.error || 'No seasons');
 
     // Last season with received packages, fallback to most recent
     const lastWithPkgs = [...seasons].reverse().find(s => (pkgs[s] || 0) > 0);
     selectedSeason = lastWithPkgs || seasons[seasons.length - 1];
 
     sel.innerHTML =
-      `<option value="__summary__">📊 Balance Total — Todas las Temporadas</option>` +
+      `<option value="__summary__">📊 Total Balance — All Seasons</option>` +
       `<option disabled>──────────────────────</option>` +
       seasons.map(s =>
         `<option value="${s}"${s === selectedSeason ? ' selected' : ''}>${s}</option>`
@@ -717,9 +723,9 @@ function selectSeason(s) {
 }
 
 async function loadBalanceSummary() {
-  setBody('<div class="loading"><div class="spinner"></div>Calculando balance de todas las temporadas…</div>');
-  renderKPIs([]); setSL('Todas las temporadas'); setSR('');
-  document.getElementById('ttitle').textContent = 'Balance Total — Todas las Temporadas';
+  setBody('<div class="loading"><div class="spinner"></div>Calculating balance for all seasons…</div>');
+  renderKPIs([]); setSL('All Seasons'); setSR('');
+  document.getElementById('ttitle').textContent = 'Total Balance — All Seasons';
 
   try {
     const r    = await fetch('/api/balance-summary');
@@ -735,10 +741,10 @@ async function loadBalanceSummary() {
 
     // KPI cards
     document.getElementById('kpis').innerHTML = [
-      kpiCard('Net Sales Total',  new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.netSales), 'todas las temporadas'),
-      kpiCard('Expenses Total',   new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.expenses), 'todas las temporadas'),
-      kpiCard('Balance Total',    new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(data.total.balance)) + (data.total.balance < 0 ? ' déficit' : ''), 'acumulado'),
-      kpiCard('Temporadas',       data.rows.length, 'con datos'),
+      kpiCard('Net Sales Total',  new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.netSales), 'all seasons'),
+      kpiCard('Expenses Total',   new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.expenses), 'all seasons'),
+      kpiCard('Balance Total',    new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(data.total.balance)) + (data.total.balance < 0 ? ' deficit' : ''), 'cumulative'),
+      kpiCard('Seasons',          data.rows.length, 'with data'),
     ].join('');
 
     // Tabla resumen
@@ -753,7 +759,7 @@ async function loadBalanceSummary() {
     const t = data.total;
     const totRow = `
       <tr style="background:var(--gd);color:#fff;font-size:13px">
-        <td style="font-weight:800;padding:10px 12px">TOTAL ACUMULADO</td>
+        <td style="font-weight:800;padding:10px 12px">CUMULATIVE TOTAL</td>
         <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.netSales)}</td>
         <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.expenses)}</td>
         <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:800">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.balance)}</td>
@@ -763,7 +769,7 @@ async function loadBalanceSummary() {
       <table class="stmt-tbl" style="max-width:700px;margin:16px auto">
         <thead>
           <tr>
-            <th>Temporada</th>
+            <th>Season</th>
             <th style="text-align:right">Net Sales</th>
             <th style="text-align:right">Expenses</th>
             <th style="text-align:right">Balance</th>
@@ -772,8 +778,8 @@ async function loadBalanceSummary() {
         <tbody>${rows}${totRow}</tbody>
       </table>`);
 
-    setSL(`${data.rows.length} temporadas`);
-    setSR(`Balance acumulado: ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.balance)}`);
+    setSL(`${data.rows.length} seasons`);
+    setSR(`Cumulative Balance: ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.balance)}`);
   } catch (e) {
     setBody(`<div class="err"><strong>Error:</strong> ${e.message}</div>`);
     setSL('Error'); setSR('');
@@ -783,7 +789,7 @@ async function loadBalanceSummary() {
 // ── GWR Statement renderer ────────────────────────────────────────────────────
 function renderStatement(d) {
   if (!d || d.error) {
-    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'Sin datos'}</div>`);
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
     setSL('Error'); setSR(''); return;
   }
   lastStatementData = d;
@@ -889,7 +895,7 @@ function renderStatement(d) {
           <td class="r" style="width:45%">${fmtC(d.balanceStd)}</td>
         </tr>
         <tr>
-          <td>Ajustes</td>
+          <td>Adjustments</td>
           <td class="r">${fmtC(ajustesStmt)}</td>
         </tr>
       </tbody>
@@ -905,24 +911,24 @@ function renderStatement(d) {
 
     <div class="stmt-note">
       ${d.suppAsOf
-        ? `📋 <strong>Datos suplementarios al ${d.suppAsOf}:</strong> Sent/Received from Repack · Dumped.<br>
-           ⚖️ <strong>Avg Price (Net)</strong> = Net Sales ÷ Packages Received (incluye Dumped y Shrinkage de reempaque: cajas enviadas menos cajas recuperadas).`
-        : `⚠️ <strong>Sin datos suplementarios para esta temporada.</strong> Sube el PDF del Grower Statement para completar Sent to Repack · Received from Repack · Dumped · Avg Price.`
+        ? `📋 <strong>Supplemental data as of ${d.suppAsOf}:</strong> Sent/Received from Repack · Dumped.<br>
+           ⚖️ <strong>Avg Price (Net)</strong> = Net Sales ÷ Packages Received (includes Dumped and Repack Shrinkage: boxes sent minus boxes recovered).`
+        : `⚠️ <strong>No supplemental data for this season.</strong> Upload the Grower Statement PDF to complete Sent to Repack · Received from Repack · Dumped · Avg Price.`
       }<br>
-      Generado: ${new Date().toLocaleString('en-US')}
+      Generated: ${new Date().toLocaleString('en-US')}
     </div>
   </div>`;
 
   setBody(html);
-  setSL(`Temporada: ${d.season}`);
-  setSR(`${d.expenses.length} conceptos de gasto`);
+  setSL(`Season: ${d.season}`);
+  setSR(`${d.expenses.length} expense concepts`);
 
   // KPI cards
   document.getElementById('kpis').innerHTML = [
     kpiCard('Net Sales STD',     fmtC(sl.netStd),          'season to date'),
     kpiCard('Expenses STD',      fmtC(d.expTotStd),        'season to date'),
-    kpiCard('Balance STD',       fmtC(d.balanceStd),       d.balanceStd >= 0 ? 'positive' : 'déficit'),
-    kpiCard('Pkgs Invoiced STD', fmtN(pk.pkgsInvoicedStd), 'cajas facturadas'),
+    kpiCard('Balance STD',       fmtC(d.balanceStd),       d.balanceStd >= 0 ? 'positive' : 'deficit'),
+    kpiCard('Pkgs Invoiced STD', fmtN(pk.pkgsInvoicedStd), 'boxes invoiced'),
     ...(sl.avgPriceNetStd ? [kpiCard('Avg Price (Net)',
       fmtC(sl.avgPriceNetStd),
       (pk.dumpedStd || pk.sentToRepackStd) ? 'incl. dumped & repack shrinkage' : 'por caja')] : []),
@@ -932,7 +938,7 @@ function renderStatement(d) {
 // ── Statement by Season (pivot filas × temporadas) ───────────────────────────
 function renderStatementBySeason(d) {
   if (!d || d.error) {
-    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'Sin datos'}</div>`);
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
     setSL('Error'); setSR(''); return;
   }
 
@@ -1005,10 +1011,10 @@ function renderStatementBySeason(d) {
     { type:'data',    label:'Advances',                   key:'exp_Advances',     fmt:'usd', sub:true },
     { type:'total',   label:'Total Wires',                key:'wiresTotal',   fmt:'usd' },
 
-    { type:'data',    label:'Ajustes',                   fmt:'usd',
+    { type:'data',    label:'Adjustments',               fmt:'usd',
       valFn: s => isClosed(s) ? -(data[s]?.balance || 0) : 0 },
 
-    { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Ajustes)', fmt:'usd',
+    { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Adjustments)', fmt:'usd',
       valFn: s => {
         const bal = data[s]?.balance || 0;
         return bal + (isClosed(s) ? -bal : 0);
@@ -1021,7 +1027,7 @@ function renderStatementBySeason(d) {
   const thBase = `position:sticky;top:0;z-index:2;background:var(--gd)`;
 
   const head = `<tr>
-    <th style="min-width:195px;text-align:left;position:sticky;left:0;top:0;z-index:5;background:var(--gd)">Concepto</th>
+    <th style="min-width:195px;text-align:left;position:sticky;left:0;top:0;z-index:5;background:var(--gd)">Concept</th>
     ${seasons.map(s => `
       <th style="text-align:right;min-width:115px;${thBase}">${s}</th>
       <th style="${PC_HDR};${thBase};background:#0b2e19">$/caja</th>
@@ -1111,20 +1117,20 @@ function renderStatementBySeason(d) {
   }, 0);
 
   document.getElementById('kpis').innerHTML = [
-    kpiCard('Net Sales Total', fmtUSD(totNet), 'todas las temporadas'),
-    kpiCard('Expenses Total',  fmtUSD(totExp), 'sin wires'),
+    kpiCard('Net Sales Total', fmtUSD(totNet), 'all seasons'),
+    kpiCard('Expenses Total',  fmtUSD(totExp), 'excl. wires'),
     kpiCard('Wires Total',     fmtUSD(totWir), 'Liq · P&P · Advances'),
-    kpiCard('Balance Total',   fmtUSD(Math.abs(totBal)), totBal >= 0 ? 'positivo' : 'déficit'),
+    kpiCard('Balance Total',   fmtUSD(Math.abs(totBal)), totBal >= 0 ? 'positive' : 'deficit'),
   ].join('');
 
-  setSL(`${seasons.length} temporadas · ${concepts.length} conceptos`);
-  setSR(`Balance Total: ${fmtUSD(totBal)}`);
+  setSL(`${seasons.length} seasons · ${concepts.length} concepts`);
+  setSR(`Total Balance: ${fmtUSD(totBal)}`);
 }
 
 // ── Sales by Season (seasons as rows, metrics as columns) ────────────────────
 function renderSalesBySeason(d) {
   if (!d || d.error) {
-    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'Sin datos'}</div>`);
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
     setSL('Error'); setSR(''); return;
   }
 
@@ -1196,14 +1202,14 @@ function renderSalesBySeason(d) {
   </table>`);
 
   document.getElementById('kpis').innerHTML = [
-    kpiCard('Total Pkgs',   fmtNum(totPkgs),  'todas las temporadas'),
-    kpiCard('Gross Sales',  fmtUSD(totGross), 'ventas brutas'),
-    kpiCard('Adjustments',  fmtUSD(totAdj),   `${totGross ? (totAdj/totGross*100).toFixed(1)+'%' : '—'} de ventas brutas`),
-    kpiCard('Net Sales',    fmtUSD(totNet),   'ventas netas'),
-    kpiCard('$/caja (Net)', totPkgs ? fmtUSD(totNet/totPkgs) : '—', 'precio promedio neto'),
+    kpiCard('Total Pkgs',   fmtNum(totPkgs),  'all seasons'),
+    kpiCard('Gross Sales',  fmtUSD(totGross), 'gross sales'),
+    kpiCard('Adjustments',  fmtUSD(totAdj),   `${totGross ? (totAdj/totGross*100).toFixed(1)+'%' : '—'} of gross sales`),
+    kpiCard('Net Sales',    fmtUSD(totNet),   'net sales'),
+    kpiCard('$/caja (Net)', totPkgs ? fmtUSD(totNet/totPkgs) : '—', 'avg net price'),
   ].join('');
 
-  setSL(`${seasons.length} temporadas`);
+  setSL(`${seasons.length} seasons`);
   setSR(`Net Sales: ${fmtUSD(totNet)}`);
 }
 
@@ -1216,7 +1222,7 @@ function pivotSort(col) {
 
 function renderExpensesBySeason(d) {
   if (!d || d.error) {
-    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'Sin datos'}</div>`);
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
     setSL('Error'); setSR(''); return;
   }
 
@@ -1241,7 +1247,7 @@ function renderExpensesBySeason(d) {
   const STK = `position:sticky;top:0;z-index:2`;
   const buildHead = () => `<tr>
     <th style="${STK}">#</th>
-    <th style="min-width:160px;position:sticky;top:0;left:0;z-index:5">Concepto</th>
+    <th style="min-width:160px;position:sticky;top:0;left:0;z-index:5">Concept</th>
     ${seasons.map(s =>
       `<th class="${pivotSortCol===s?'sorted':''}" onclick="pivotSort('${s}')"
            style="text-align:right;min-width:105px;${STK}">${s}${si(s)}</th>
@@ -1301,7 +1307,7 @@ function renderExpensesBySeason(d) {
       <thead>
         <tr>
           <th style="background:#1e3a8a;${STK}">#</th>
-          <th style="background:#1e3a8a;min-width:160px;position:sticky;top:0;left:0;z-index:5">Concepto</th>
+          <th style="background:#1e3a8a;min-width:160px;position:sticky;top:0;left:0;z-index:5">Concept</th>
           ${seasons.map(s =>
             `<th class="${pivotSortCol===s?'sorted':''}" onclick="pivotSort('${s}')"
                  style="background:#1e3a8a;text-align:right;min-width:105px;${STK}">${s}${si(s)}</th>
@@ -1332,13 +1338,13 @@ function renderExpensesBySeason(d) {
 
   const topSeason = seasons.reduce((b, s) => (totals[s]||0) > (totals[b]||0) ? s : b, seasons[0]);
   document.getElementById('kpis').innerHTML = [
-    kpiCard('Expenses Total',  fmtUSD(grandTotal),      'sin wires'),
+    kpiCard('Expenses Total',  fmtUSD(grandTotal),      'excl. wires'),
     kpiCard('Wires Total',     fmtUSD(wireGrandTotal),  'Liquidation · Pick&Pack · Advances'),
-    kpiCard('Top Temporada',   topSeason || '—',        fmtUSD(totals[topSeason] || 0)),
-    kpiCard('Temporadas',      seasons.length,          'con gastos'),
+    kpiCard('Top Season',      topSeason || '—',        fmtUSD(totals[topSeason] || 0)),
+    kpiCard('Seasons',         seasons.length,          'with expenses'),
   ].join('');
 
-  setSL(`${sortedExp.length} expenses · ${sortedWires.length} wires · ${seasons.length} temporadas`);
+  setSL(`${sortedExp.length} expenses · ${sortedWires.length} wires · ${seasons.length} seasons`);
   setSR(`Expenses: ${fmtUSD(grandTotal)} | Wires: ${fmtUSD(wireGrandTotal)}`);
 }
 
@@ -1489,32 +1495,46 @@ function renderExpensesTable(data) {
 // ── Reporte de Ajustes ────────────────────────────────────────────────────────
 function renderAdjReport(data) {
   if (!data.length) {
-    setBody('<div class="empty">No se encontraron ajustes en el rango seleccionado</div>');
-    setSL('0 ajustes'); setSR(''); return;
+    setBody('<div class="empty">No adjustments found in the selected range</div>');
+    setSL('0 adjustments'); setSR(''); return;
   }
 
-  const cols   = Object.keys(data[0]);
   const m      = MODS[mIdx];
   const amtSet = new Set(m.amt);
   const isAmt  = c => amtSet.has(c);
   const isNum  = c => data.find(r => r[c] != null) && typeof data.find(r => r[c] != null)[c] === 'number';
 
-  // Columnas especiales anotadas por el servidor
-  const COL_POST  = 'Año_Post';
-  const COL_ENDY  = 'Año_Fin_Temp';
-  const COL_FLAG  = 'Fuera_Temporada';
+  const COL_ENDY = 'Año_Fin_Temp';
+  const COL_COMP = 'Complaint_Date';
+  const COL_POST = 'Año_Post';
+  const COL_DIAS = 'Dias';
+  const HIDDEN   = new Set(['Fuera_Temporada', 'Año_Post_raw', 'Trouble_Status']);
+
+  // Orden fijo de columnas
+  const COL_ORDER = [
+    'Grower_Code','Grower_Name','Season_Name','Contract_No.',
+    'Commodity_Name','Variety_Name','Pack_Style_Code','Size_Name','Label_Name',
+    'Trouble_No.','Trouble_Reason','Order_No.','Qty','Amount',
+    COL_ENDY, COL_COMP, COL_POST, COL_DIAS
+  ];
+  const rawCols = Object.keys(data[0]).filter(c => !HIDDEN.has(c));
+  const cols = [
+    ...COL_ORDER.filter(c => rawCols.includes(c)),
+    ...rawCols.filter(c => !COL_ORDER.includes(c))
+  ];
 
   const thStyle = c => {
-    if (c === COL_POST || c === COL_ENDY) return 'style="background:#155e39"';
-    if (c === COL_FLAG)                   return 'style="background:#7f1d1d"';
+    if (c === COL_ENDY || c === COL_COMP || c === COL_POST) return 'style="background:#155e39"';
+    if (c === COL_DIAS)   return 'style="background:#7f1d1d"';
     return '';
   };
 
   const thLabel = c => {
     const si = `<span class="si">${sCol===c?(sDir===1?'↑':'↓'):'↕'}</span>`;
-    if (c === COL_POST) return `Fecha de Ajuste${si}`;
-    if (c === COL_ENDY) return `Fecha de Embarque${si}`;
-    if (c === COL_FLAG) return `Fuera Temporada${si}`;
+    if (c === COL_ENDY)   return `Ship Date${si}`;
+    if (c === COL_COMP)   return `Open Date${si}`;
+    if (c === COL_POST)   return `Adj. Date${si}`;
+    if (c === COL_DIAS)   return `Days${si}`;
     return `${c}${si}`;
   };
 
@@ -1525,11 +1545,13 @@ function renderAdjReport(data) {
 
   const fmtCell = (c, v) => {
     if (v == null || v === '') return `<td class="rno">—</td>`;
-    if (c === COL_FLAG)
-      return v === 'Sí'
-        ? `<td style="color:#ef4444;font-weight:700;text-align:center">⚠️ Sí</td>`
-        : `<td style="color:#16a34a;text-align:center">✓ No</td>`;
-    if (c === COL_POST || c === COL_ENDY)
+    if (c === COL_DIAS) {
+      const alert = typeof v === 'number' && v > 15;
+      const color = alert ? '#ef4444' : '#16a34a';
+      const icon  = alert ? '⚠️ ' : '';
+      return `<td class="r" style="font-weight:700;color:${color}">${icon}${v}</td>`;
+    }
+    if (c === COL_ENDY || c === COL_COMP || c === COL_POST)
       return `<td class="r" style="color:var(--gd);font-weight:700">${v}</td>`;
     if (isAmt(c) && typeof v === 'number')
       return `<td class="${v < 0 ? 'rc rn' : 'rc'}">${fmtUSD(v)}</td>`;
@@ -1537,21 +1559,20 @@ function renderAdjReport(data) {
     return `<td>${v}</td>`;
   };
 
-  const fuera  = data.filter(r => r[COL_FLAG] === 'Sí');
-  const dentro = data.filter(r => r[COL_FLAG] !== 'Sí');
+  const alertRows = data.filter(r => typeof r[COL_DIAS] === 'number' && r[COL_DIAS] > 15);
 
   const body = data.map((r, idx) => {
-    const rowStyle = r[COL_FLAG] === 'Sí' ? ' style="background:#fff1f2"' : '';
+    const alert = typeof r[COL_DIAS] === 'number' && r[COL_DIAS] > 15;
+    const rowStyle = alert ? ' style="background:#fff1f2"' : '';
     return `<tr${rowStyle}><td class="row-num r">${idx+1}</td>${cols.map(c => fmtCell(c, r[c])).join('')}</tr>`;
   }).join('');
 
   const infoBar = `
     <div style="padding:9px 16px;font-size:12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;
                 background:#fff7ed;border-bottom:1px solid #fed7aa;color:#92400e">
-      <span><strong>Total ajustes:</strong> ${data.length}</span>
-      <span style="color:#16a34a;font-weight:600">✓ Dentro de temporada: ${dentro.length}</span>
-      <span style="color:#ef4444;font-weight:700">⚠️ Fuera de temporada: ${fuera.length}</span>
-      <span style="color:#64748b;font-size:11px">Fecha de Embarque = último año de la temporada del producto &nbsp;|&nbsp; Fecha de Ajuste = año en que se procesó el ajuste</span>
+      <span><strong>Total adjustments:</strong> ${data.length}</span>
+      <span style="color:#ef4444;font-weight:700">⚠️ Over 15 days: ${alertRows.length}</span>
+      <span style="color:#64748b;font-size:11px">Days = between Ship Date and Adj. Date</span>
     </div>`;
 
   setBody(infoBar + `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`);
@@ -1560,28 +1581,49 @@ function renderAdjReport(data) {
     for (const f of m.amt) if (typeof r[f] === 'number') return s + r[f];
     return s;
   }, 0);
-  const fueraAmt = fuera.reduce((s, r) => {
+  const alertAmt = alertRows.reduce((s, r) => {
     for (const f of m.amt) if (typeof r[f] === 'number') return s + r[f];
     return s;
   }, 0);
 
-  // KPI cards
   document.getElementById('kpis').innerHTML = [
-    kpiCard('Total Ajustes',         fmtNum(data.length),    'en el período'),
-    kpiCard('Monto Total',           fmtUSD(totalAmt),       'suma de ajustes'),
-    kpiCard('Fuera de Temporada',    fmtNum(fuera.length),   'ajustes tardíos'),
-    kpiCard('Monto Fuera Temp.',     fmtUSD(fueraAmt),       'monto tardío'),
+    kpiCard('Total Adjustments', fmtNum(data.length),      'in period'),
+    kpiCard('Total Amount',      fmtUSD(totalAmt),         'sum of adjustments'),
+    kpiCard('Over 15 Days',      fmtNum(alertRows.length), 'between ship and adj. date'),
+    kpiCard('Amt +15 Days',      fmtUSD(alertAmt),         'amount of late adjustments'),
   ].join('');
 
-  setSL(`${data.length.toLocaleString()} ajustes`);
-  setSR(`Fuera de temporada: ${fuera.length} (${fmtUSD(fueraAmt)})`);
+  setSL(`${data.length.toLocaleString()} adjustments`);
+  setSR(`+15 days: ${alertRows.length} (${fmtUSD(alertAmt)})`);
 }
 
 // ── PDF Export ────────────────────────────────────────────────────────────────
 function exportPDF() {
   const id  = MODS[mIdx].id;
-  const qs  = buildQS();
-  const q   = qs ? '?' + qs : '';
+  const p   = new URLSearchParams(buildQS());
+  if (sCol !== null) { p.set('sortCol', sCol); p.set('sortDir', String(sDir)); }
+  const q   = p.toString() ? '?' + p.toString() : '';
+
+  if (id === 'adj-report') {
+    if (!view.length) return;
+    fetch('/report/adj-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(view),
+    })
+    .then(r => r.status === 204 ? null : r.blob())
+    .then(blob => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `H2E_adj-report_${new Date().toISOString().slice(0,10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(e => alert('PDF error: ' + e.message));
+    return;
+  }
+
   if      (id === 'sales-season')    window.open('/report/sales-by-season', '_blank');
   else if (id === 'stmt-by-season')  window.open('/report/stmt-by-season', '_blank');
   else if (id === 'expenses-season') window.open('/report/expenses-season' + q, '_blank');
@@ -1684,7 +1726,7 @@ function generateExpensesBySeasonPDF() {
   };
 
   withLogo(doc, 'Expenses by Season', () => {
-    const expHead = [['Concepto', ...seasons, 'Total']];
+    const expHead = [['Concept', ...seasons, 'Total']];
     const expBody = rows.map(r => [r.concept, ...seasons.map(s => fC(r.amounts[s] || 0)), fC(r.total)]);
     expBody.push(['TOTAL', ...seasons.map(s => fC(totals[s] || 0)), fC(grandTotal)]);
 
@@ -1706,7 +1748,7 @@ function generateExpensesBySeasonPDF() {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...BLUE);
     doc.text('Wires', 14, wY - 3);
 
-    const wireHead = [['Concepto', ...seasons, 'Total']];
+    const wireHead = [['Concept', ...seasons, 'Total']];
     const wireBody = wires.map(r => [r.concept, ...seasons.map(s => fC(r.amounts[s] || 0)), fC(r.total)]);
     wireBody.push(['TOTAL WIRES', ...seasons.map(s => fC(wireTotals[s] || 0)), fC(wireGrandTotal)]);
 
@@ -1867,13 +1909,13 @@ function generateStatementBySeasonPDF() {
       { type:'data',    label:'Pick & Pack',            key:'exp_Pick & Pack', fmt:'usd' },
       { type:'data',    label:'Advances',               key:'exp_Advances',    fmt:'usd' },
       { type:'total',   label:'Total Wires',            key:'wiresTotal',      fmt:'usd' },
-      { type:'data',    label:'Ajustes',                fmt:'usd',
+      { type:'data',    label:'Adjustments',            fmt:'usd',
         valFn: s => pdfIsClosed(s) ? -(data[s]?.balance || 0) : 0 },
-      { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Ajustes)', fmt:'usd',
+      { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Adjustments)', fmt:'usd',
         valFn: s => { const b = data[s]?.balance||0; return b + (pdfIsClosed(s) ? -b : 0); } },
     ];
 
-    const head = [['Concepto', ...seasons, 'Total']];
+    const head = [['Concept', ...seasons, 'Total']];
     const body = [];
 
     for (const row of ROWS) {
@@ -1938,7 +1980,7 @@ const pillSeasonKey = s => {
 
 function buildSeasonPills(data) {
   const box = document.getElementById('season-pills');
-  if (!data.length || !('Season_Name' in data[0])) { box.innerHTML = ''; return; }
+  if (!data.length || !('Season_Name' in data[0]) || SALES_IDS.has(MODS[mIdx].id)) { box.innerHTML = ''; return; }
 
   const seasons = [...new Set(data.map(r => r['Season_Name']).filter(Boolean))]
     .sort((a, b) => pillSeasonKey(a) - pillSeasonKey(b));
@@ -1949,10 +1991,10 @@ function buildSeasonPills(data) {
   box.innerHTML =
     `<span style="font-size:11px;font-weight:700;color:var(--muted);
                   text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">
-       📅 Temporada:
+       📅 Season:
      </span>` +
     `<button class="s-pill s-pill-all${allActive ? ' active' : ''}" onclick="setSeasonPill('')">
-       Todas (${seasons.length})
+       All (${seasons.length})
      </button>` +
     seasons.map(s =>
       `<button class="s-pill${seasonPillFilter === s ? ' active' : ''}" onclick="setSeasonPill('${s}')">
@@ -1982,7 +2024,7 @@ async function loadFiltersSeasons() {
     const seasons = await fetch('/api/seasons').then(r => r.json());
     if (!seasons.length) return;
     sel.innerHTML =
-      `<option value="">— Seleccionar temporada —</option>` +
+      `<option value="">— Select season —</option>` +
       seasons.map(s => `<option value="${s}">${s}</option>`).join('');
   } catch(e) {}
 }
@@ -2003,28 +2045,53 @@ function jumpToSeason(season) {
 }
 
 // ── Column Filters ────────────────────────────────────────────────────────────
+const SALES_FILTER_COLS = [
+  { col: 'Season_Name',    label: 'Season'    },
+  { col: 'Commodity_Name', label: 'Commodity' },
+  { col: 'Variety_Name',   label: 'Variety'   },
+  { col: 'Pack_Style_Code',label: 'Pack'      },
+  { col: 'Size_Name',      label: 'Size'      },
+  { col: 'Label_Name',     label: 'Label'     },
+];
+const SALES_IDS = new Set(['sales-ship', 'sales-post']);
+
 function buildColumnFilters(data) {
   const box = document.getElementById('col-filters');
   if (!data.length) { box.innerHTML = ''; return; }
 
-  const PRIORITY = [
-    'Contract_No','Contract_no.','Grower_Code','Grower Code',
-    'Label_Code','Commodity','Item','Item_Name','Product','Variety','Grade',
-    'Shipper','Origin','State'
-  ];
-  const allCols = Object.keys(data[0]);
-  const seen    = new Set();
-  const filterable = [];
+  const isSales = SALES_IDS.has(MODS[mIdx].id);
 
-  for (const col of [...PRIORITY, ...allCols]) {
-    if (seen.has(col)) continue;
-    seen.add(col);
-    if (!allCols.includes(col)) continue;
-    if (col === 'Season_Name') continue;  // shown as pills
-    const sample = data.find(r => r[col] != null && r[col] !== '');
-    if (!sample || typeof sample[col] === 'number') continue;
-    const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
-    if (vals.length >= 2 && vals.length <= 120) filterable.push(col);
+  let filterable; // [{ col, label }]
+
+  if (isSales) {
+    const allCols = new Set(Object.keys(data[0]));
+    filterable = SALES_FILTER_COLS
+      .filter(({ col }) => allCols.has(col))
+      .filter(({ col }) => {
+        const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+        return vals.length >= 2;
+      });
+  } else {
+    const PRIORITY = [
+      'Contract_No','Contract_no.','Grower_Code','Grower Code',
+      'Label_Code','Commodity','Item','Item_Name','Product','Variety','Grade',
+      'Shipper','Origin','State'
+    ];
+    const allCols = Object.keys(data[0]);
+    const seen    = new Set();
+    const cols    = [];
+    for (const col of [...PRIORITY, ...allCols]) {
+      if (seen.has(col)) continue;
+      seen.add(col);
+      if (!allCols.includes(col)) continue;
+      if (col === 'Season_Name') continue;
+      if (col === 'Año_Post' || col === 'Año_Fin_Temp') continue;
+      const sample = data.find(r => r[col] != null && r[col] !== '');
+      if (!sample || typeof sample[col] === 'number') continue;
+      const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+      if (vals.length >= 2 && vals.length <= 120) cols.push(col);
+    }
+    filterable = cols.map(col => ({ col, label: col.replace(/_/g, ' ') }));
   }
 
   if (!filterable.length) { box.innerHTML = ''; return; }
@@ -2037,11 +2104,14 @@ function buildColumnFilters(data) {
   box.innerHTML =
     `<span style="font-size:11px;font-weight:700;color:#2d6a4f;text-transform:uppercase;
                   letter-spacing:.5px;align-self:flex-end;padding-bottom:8px;white-space:nowrap">
-      ⚙ Column Filters</span>` +
-    filterable.map(col => {
-      const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))].sort();
+      ${isSales ? '🔍 Filtros' : '⚙ Column Filters'}</span>` +
+    filterable.map(({ col, label }) => {
+      const rawVals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+      const parseDD = s => { const [d,m,y] = s.split('/').map(Number); return new Date(y, m-1, d); };
+      const vals = col === 'Complaint_Date'
+        ? rawVals.sort((a, b) => parseDD(a) - parseDD(b))
+        : rawVals.sort();
       const cur  = columnFilters[col] || '';
-      const label = col.replace(/_/g, ' ');
       return `<div class="fg">
         <label>${label}</label>
         <select onchange="setColFilter('${col}', this.value)" style="${selStyle}">

@@ -12,10 +12,15 @@ const AUTH_B64 = Buffer.from('h2e:Solvegbe0281').toString('base64');
 const agent    = new https.Agent({ rejectUnauthorized: false });
 
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json({ limit: '5mb' }));
 
 // Datos suplementarios (Sent to Repack, Received from Repack, Dumped, Pending Cash Receipts)
 const SUPP_PATH = path.join(__dirname, 'supplemental-data.json');
 const loadSupp  = () => { try { return JSON.parse(fs.readFileSync(SUPP_PATH, 'utf8')); } catch(e) { return {}; } };
+
+// Trouble Claims lookup: Trouble_No → { complaint, posted, status }
+const TROUBLE_PATH = path.join(__dirname, 'trouble-claims.json');
+const loadTrouble  = () => { try { return JSON.parse(fs.readFileSync(TROUBLE_PATH, 'utf8')); } catch(e) { return {}; } };
 
 // Renombres de temporadas para display
 const SEASON_RENAME = { '2020': '2020/2021', '2021': '2021/2022', '2022': '2022/2023' };
@@ -535,13 +540,38 @@ app.get('/api/adj-season-report', async (req, res) => {
     return n < 100 ? 2000 + n : n;
   };
 
+  const troubleMap = loadTrouble();
+  const fmtMDY = s => {
+    if (!s) return null;
+    const [m, d, y] = s.split('/');
+    return `${String(d).padStart(2,'0')}/${String(m).padStart(2,'0')}/${y}`;
+  };
+  const parseDMY = s => {
+    if (!s || typeof s !== 'string') return null;
+    const p = s.split('/');
+    if (p.length !== 3) return null;
+    return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+  };
+
   const all = chunks.flat().map(r => {
-    const sName   = renameSeason(r['Season_Name']);
-    const postY   = r['Año_Post'];
-    const sEndY   = seasonEndYear(sName);
-    const fuera   = postY > sEndY;
-    const shipDate = shipMap[r['Order_No.']] || null;
-    return { ...r, Season_Name: sName, Año_Fin_Temp: shipDate || sEndY, Fuera_Temporada: fuera ? 'Sí' : 'No' };
+    const sName     = renameSeason(r['Season_Name']);
+    const postY     = r['Año_Post'];
+    const sEndY     = seasonEndYear(sName);
+    const shipDate  = shipMap[r['Order_No.']] || null;
+    const tbl       = troubleMap[String(r['Trouble_No.'])] || null;
+    const ajuste    = tbl ? (fmtMDY(tbl.posted) || null) : null;
+    const d1        = parseDMY(shipDate);
+    const d2        = parseDMY(ajuste);
+    const dias      = (d1 && d2) ? Math.round((d2 - d1) / 86400000) : null;
+    return {
+      ...r,
+      Season_Name:    sName,
+      Año_Fin_Temp:   shipDate || sEndY,
+      Año_Post:       ajuste || postY,
+      Complaint_Date:  tbl ? fmtMDY(tbl.complaint) : null,
+      Trouble_Status:  tbl ? tbl.status : null,
+      Dias:            dias,
+    };
   });
 
   res.json(all);
@@ -575,7 +605,7 @@ app.get('/report/sales-by-season', async (req, res) => {
 
   const mkPDF = (res, fname, layout, buildFn) => {
     const doc = new PDFDocument({ size: 'LETTER', layout,
-      margins: { top: 40, bottom: 40, left: 36, right: 36 } });
+      margins: { top: 40, bottom: 0, left: 36, right: 36 } });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${fname}.pdf"`);
     doc.pipe(res);
@@ -590,11 +620,45 @@ app.get('/report/sales-by-season', async (req, res) => {
     const apiEp = pdfGen.FLAT_API[id];
     app.get(`/report/${id}`, async (req, res) => {
       try {
-        const qs  = new URLSearchParams(req.query).toString();
+        const apiQ = { ...req.query }; delete apiQ.sortCol; delete apiQ.sortDir;
+        const qs  = new URLSearchParams(apiQ).toString();
         const { data } = await selfGet(apiEp + (qs ? '?' + qs : ''));
-        const rows = Array.isArray(data) ? data : [];
+        let rows = Array.isArray(data) ? data : [];
         if (!rows.length) return res.status(204).end();
-        const cols   = Object.keys(rows[0]);
+
+        let cols      = Object.keys(rows[0]);
+        let amtCols   = cfg.amtCols;
+        let numCols   = cfg.numCols;
+        let shortCols = [];
+
+        const sortCol = req.query.sortCol;
+        const sortDir = parseInt(req.query.sortDir) || 1;
+        if (sortCol) {
+          rows.sort((a, b) => {
+            const va = a[sortCol], vb = b[sortCol];
+            if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sortDir;
+            return String(va ?? '').localeCompare(String(vb ?? '')) * sortDir;
+          });
+        }
+
+        if (id === 'adj-report') {
+          const KEY = {
+            'Season_Name':    'Season',    'Trouble_No.':    'Trouble',
+            'Trouble_Reason': 'Reason',    'Order_No.':      'Order',
+            'Commodity_Name': 'Commodity', 'Variety_Name':   'Variety',
+            'Size_Name':      'Size',      'Label_Name':     'Label',
+            'Qty':            'Qty',       'Amount':         'Amount',
+            'Año_Fin_Temp':   'Ship Date',
+            'Complaint_Date': 'Open Date',
+            'Año_Post':       'Adj. Date',
+            'Dias':           'Days',
+          };
+          rows      = rows.map(r => Object.fromEntries(Object.entries(KEY).map(([k, label]) => [label, r[k] ?? null])));
+          cols      = Object.values(KEY);
+          amtCols   = ['Amount'];
+          numCols   = ['Qty', 'Days'];
+        }
+
         const layout = cols.length > 6 ? 'landscape' : 'portrait';
         let subtitle = '';
         if (req.query.dFrom) subtitle = `${req.query.dFrom} – ${req.query.dTo || 'today'}`;
@@ -602,7 +666,7 @@ app.get('/report/sales-by-season', async (req, res) => {
         const fname = `H2E_${id}_${new Date().toISOString().slice(0, 10)}`;
         mkPDF(res, fname, layout, doc =>
           pdfGen.buildFlatTablePDF(doc, { title: cfg.title, subtitle, cols, rows,
-            amtCols: cfg.amtCols, numCols: cfg.numCols }));
+            amtCols, numCols, shortCols }));
       } catch (err) {
         console.error('PDF error:', err.message);
         res.status(500).json({ error: err.message });
@@ -626,6 +690,29 @@ app.get('/report/sales-by-season', async (req, res) => {
       const { data } = await selfGet('/api/expenses-by-season' + (qs ? '?' + qs : ''));
       const fname = `H2E_Expenses_by_Season_${new Date().toISOString().slice(0, 10)}`;
       mkPDF(res, fname, 'landscape', doc => pdfGen.buildExpensesBySeasonPDF(doc, data));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Adj Report — POST with pre-filtered/sorted rows from client
+  app.post('/report/adj-report', (req, res) => {
+    try {
+      let rows = Array.isArray(req.body) ? req.body : [];
+      if (!rows.length) return res.status(204).end();
+      const KEY = {
+        'Season_Name':    'Season',    'Trouble_No.':    'Trouble',
+        'Trouble_Reason': 'Reason',    'Order_No.':      'Order',
+        'Commodity_Name': 'Commodity', 'Variety_Name':   'Variety',
+        'Size_Name':      'Size',      'Label_Name':     'Label',
+        'Qty':            'Qty',       'Amount':         'Amount',
+        'Año_Fin_Temp':   'Ship Date',  'Complaint_Date':  'Open Date',
+        'Año_Post':       'Adj. Date',  'Dias':            'Days',
+      };
+      rows = rows.map(r => Object.fromEntries(Object.entries(KEY).map(([k, l]) => [l, r[k] ?? null])));
+      const cols = Object.values(KEY);
+      const fname = `H2E_adj-report_${new Date().toISOString().slice(0, 10)}`;
+      mkPDF(res, fname, 'landscape', doc =>
+        pdfGen.buildFlatTablePDF(doc, { title: 'Adj Report', subtitle: '', cols, rows,
+          amtCols: ['Amount'], numCols: ['Qty', 'Days'] }));
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
 
