@@ -1,0 +1,7 @@
+import shutil
+
+origen = r"C:\Users\OFFICE DEPOT\OneDrive\Personal GBE\H2E\BCS\Empaque\Formato de Empaque 2E 25-26 (Saladette).xlsm"
+destino = r"C:\Users\OFFICE DEPOT\OneDrive\Documentos\GitHub\H2E-Crown\Info para Claude\Reportes\Empaque\Formato de Empaque 2E 25-26 (Saladette).xlsm"
+
+shutil.copy2(origen, destino)
+print("Archivo copiado exitosamente")
