@@ -702,6 +702,81 @@ app.get('/report/sales-by-season', async (req, res) => {
   });
 }
 
+// ── Nacional (CBE): lee el Excel del folder ───────────────────────────────────
+{
+  const XLSX      = require('xlsx');
+  const XLSX_FILE = path.join(__dirname, 'Info para Claude', 'Reportes', 'Nacional', 'Ventas CBE-H2E 2.xlsx');
+
+  const parseNum = v => {
+    if (v === null || v === undefined) return null;
+    const s = String(v).replace(/[\$,\s]/g, '');
+    if (s === '-' || s === '') return 0;
+    const n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  };
+
+  // Product sheets: row[0] = real column headers, row[1+] = data
+  const parseProductSheet = (wb, name) => {
+    if (!wb.SheetNames.includes(name)) return [];
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: null, raw: false });
+    if (raw.length < 2) return [];
+
+    const keyToLabel = {};
+    for (const [k, v] of Object.entries(raw[0])) {
+      const label = v ? String(v).trim() : null;
+      if (label) keyToLabel[k] = label;
+    }
+
+    const NUM = new Set(['Enviadas','Reportadas','x reportar','Precio','$ KG','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
+
+    return raw.slice(1).map(r => {
+      const row = {};
+      for (const [k, v] of Object.entries(r)) {
+        const label = keyToLabel[k];
+        if (!label) continue;
+        row[label] = NUM.has(label) ? parseNum(v) : (v ? String(v).trim() : null);
+      }
+      return row;
+    }).filter(r => r['Fecha'] || r['Manifiesto']);
+  };
+
+  // Acum sheet: row[0] = headers (venta, pagos, …), row[1+] = product rows
+  const parseAcum = wb => {
+    if (!wb.SheetNames.includes('acum')) return [];
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets['acum'], { defval: null, raw: false });
+    if (raw.length < 2) return [];
+
+    const keyToLabel = { 'Balance 2da Etapa': 'Producto' };
+    for (const [k, v] of Object.entries(raw[0])) {
+      const label = v ? String(v).trim() : null;
+      if (label) keyToLabel[k] = label;
+    }
+
+    return raw.slice(1).map(r => {
+      const row = {};
+      for (const [k, v] of Object.entries(r)) {
+        const label = keyToLabel[k];
+        if (!label) continue;
+        row[label] = label === 'Producto' ? (v ? String(v).trim() : null) : parseNum(v);
+      }
+      return row;
+    }).filter(r => r['Producto']);
+  };
+
+  app.get('/api/nacional', (req, res) => {
+    try {
+      const wb       = XLSX.readFile(XLSX_FILE);
+      const products = ['Tomatillo', 'Morrón', 'Roma'];
+      const sheets   = {};
+      for (const p of products) sheets[p] = parseProductSheet(wb, p);
+      res.json({ products, sheets, acum: parseAcum(wb) });
+    } catch (err) {
+      console.error('[Nacional]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+}
+
 app.listen(PORT, () => {
   console.log(`\n  ✅  iSolve Dashboard  →  http://localhost:${PORT}\n`);
 });

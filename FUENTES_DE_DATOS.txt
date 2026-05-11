@@ -1,0 +1,234 @@
+================================================================================
+  H2E — CROWN CITY TRADING  |  iSolve Dashboard
+  REPORTE DE FUENTES DE INFORMACIÓN
+  Generado: 2026-05-11
+================================================================================
+
+
+RESUMEN
+-------
+El dashboard obtiene datos de dos tipos de fuentes:
+  1. APIs externas de iSolve (Crown City) — datos en tiempo real via HTTP
+  2. Archivos locales JSON — datos suplementarios capturados manualmente del
+     Grower Statement en PDF
+
+Todas las llamadas a iSolve usan autenticación HTTP Basic (usuario: h2e)
+y pasan por el servidor Node local en http://localhost:3000, que actúa
+como proxy hacia https://crowncity.isolveproduce.net.
+
+
+================================================================================
+FUENTE 1 — APIs de iSolve (Crown City)
+================================================================================
+
+Servidor base: https://crowncity.isolveproduce.net
+Autenticación: HTTP Basic  (usuario: h2e)
+Timeout:       30 segundos por llamada
+Nota:          El certificado TLS del servidor no es verificado
+               (rejectUnauthorized: false). Es un servidor interno.
+
+--------------------------------------------------------------------------------
+API 1.1  GrwNetSalesByShipDateAPI.aspx
+         Ruta local: /api/sales-ship-date
+         Pestaña:    Sales / Ship Date
+         Parámetros: dFrom, dTo  (rango de fechas M/D/YYYY)
+         Datos:      Ventas netas agrupadas por fecha de embarque
+         Campos:     Season_Name, Commodity_Name, Variety_Name, Pack_Style_Code,
+                     Size_Name, Label_Name, Order_No., Ship_Date,
+                     Ship_Qty, Inv_Qty, Gross_Amt
+
+API 1.2  GrwSalesByPostDateAPI.aspx
+         Ruta local: /api/sales-post-date
+         Pestaña:    Sales / Post Date
+         Parámetros: dFrom, dTo
+         Datos:      Ventas netas agrupadas por fecha de liquidación/post
+         Campos:     Season_Name, Commodity_Name, Variety_Name, Pack_Style_Code,
+                     Size_Name, Label_Name, Qty, Amount, Avg_Price
+
+API 1.3  GrwExpensesAPI.aspx
+         Ruta local: /api/expenses
+         Pestaña:    Expenses
+         Parámetros: dFrom, dTo, Concept (opcional)
+         Datos:      Gastos del grower por fecha de post y concepto.
+                     Incluye tanto Expenses regulares como Wires
+                     (Liquidation, Pick & Pack, Advances).
+         Campos:     Season_Name, Concept_Name, Amount, (más campos de detalle)
+
+API 1.4  GrwInventoryAPI.aspx
+         Ruta local: /api/inventory
+         Pestaña:    Inventory
+         Parámetros: dAsOf  (fecha de corte M/D/YYYY)
+         Datos:      Inventario en bodega a una fecha determinada
+         Campos:     Season_Name, Commodity_Name, Variety_Name,
+                     Pack_Style_Code, Size_Name, Label_Name,
+                     Qty, Gross_Amount / Gross Amount
+
+API 1.5  GrwAdjByPostDateAPI.aspx
+         Ruta local: /api/adj-post-date
+         Pestaña:    Adj / Post Date
+         Parámetros: dFrom, dTo
+         Datos:      Ajustes de precio (price adjustments) por fecha de post
+         Campos:     Season_Name, Trouble_No., Trouble_Reason, Order_No.,
+                     Commodity_Name, Variety_Name, Size_Name, Label_Name,
+                     Qty, Amount, Adj_Amt
+
+API 1.6  GrwGrwPendingAdjByLotAPI.aspx
+         Ruta local: /api/pending-adj
+         Pestaña:    Pending Adj
+         Parámetros: ninguno (devuelve todos los pendientes activos)
+         Datos:      Ajustes pendientes abiertos, por lote
+         Campos:     Season_Name, Trouble_No., Order_No.,
+                     Pend_Adj_Pkgs, Pend_Adj_Amount, Adj_Amt
+
+
+================================================================================
+FUENTE 2 — supplemental-data.json  (archivo local)
+================================================================================
+
+Ruta:     <raíz del proyecto>/supplemental-data.json
+Usado en: GWR Statement, Statement by Season
+Cómo se actualiza: manualmente, leyendo el PDF del Grower Statement
+
+Estructura (por temporada):
+  {
+    "2025/2026": {
+      "sentToRepack":        13306,    -- cajas enviadas a reempacar
+      "receivedFromRepack":  11278,    -- cajas recuperadas del reempaque
+      "dumped":              2601,     -- cajas dumped/descartadas
+      "pendingToInvoice":    72,       -- cajas pendientes de facturar
+                                          (si null, se usa el inventario
+                                           de GrwInventoryAPI)
+      "pendingCashReceipts": 102013.40,-- cobros pendientes en efectivo
+      "asOf":                "4/10/2026" -- fecha de vigencia del dato
+    },
+    ...
+  }
+
+Temporadas con datos (al 2026-05-11):
+  2020/2021 · 2021/2022 · 2022/2023 · 2023 · 2023/2024
+  2024/2025 · 2025 · 2025/2026 · 2026 · 2026/2027
+
+Impacto en cálculos:
+  - Packages Received STD = Pkgs Invoiced + Pending + Dumped + Repack Shrinkage
+  - Repack Shrinkage = sentToRepack - receivedFromRepack
+  - Avg Price (Net) = Net Sales / Packages Received
+  - Sin estos datos, el Statement muestra advertencia y no calcula el
+    avg price neto correctamente.
+
+
+================================================================================
+FUENTE 3 — trouble-claims.json  (archivo local)
+================================================================================
+
+Ruta:     <raíz del proyecto>/trouble-claims.json
+Usado en: Adj Report  (/api/adj-season-report)
+Cómo se actualiza: manualmente, extrayendo del PDF "Trouble Claims"
+
+Estructura:
+  {
+    "<Trouble_No>": {
+      "complaint": "MM/DD/YYYY",  -- fecha de apertura del reclamo
+      "posted":    "MM/DD/YYYY",  -- fecha en que se posteó el ajuste
+      "status":    "Posted"
+    },
+    ...
+  }
+
+Uso:
+  El Adj Report cruza cada ajuste de GrwAdjByPostDateAPI con este archivo
+  usando Trouble_No como llave. Agrega las columnas:
+    - Complaint_Date  (fecha apertura del reclamo)
+    - Año_Post / Adj. Date  (fecha real del ajuste, desde posted)
+    - Dias  (días transcurridos entre Ship Date y Adj. Date)
+  El campo "Dias > 15" se resalta en rojo como alerta.
+
+  Sin este archivo, esas tres columnas aparecen vacías y el cálculo
+  de días no se puede realizar.
+
+
+================================================================================
+FLUJO DE DATOS POR PESTAÑA
+================================================================================
+
+Pestaña               APIs iSolve usadas               Archivos locales
+--------------------  -------------------------------  --------------------
+GWR Statement         1.2 + 1.1 + 1.3 + 1.5 + 1.4    supplemental-data
+                      + 1.6 (6 APIs en paralelo,       .json
+                      STD + MTD = 10 llamadas)
+
+Sales / Ship Date     1.1                              —
+
+Sales / Post Date     1.2                              —
+
+Inventory             1.4                              —
+
+Expenses              1.3                              —
+
+Adj / Post Date       1.5                              —
+
+Pending Adj           1.6                              —
+
+Adj Report            1.5 (por año) + 1.1 (ship)      trouble-claims.json
+
+Statement by Season   1.2 + 1.5 + 1.3 + 1.4 + 1.6    supplemental-data
+                      (5 APIs en paralelo)             .json (todas las temp.)
+
+Expenses by Season    1.3                              —
+
+Sales by Season       Reutiliza datos de              —
+                      Statement by Season
+
+
+================================================================================
+TRANSFORMACIONES APLICADAS EN EL SERVIDOR
+================================================================================
+
+1. RENOMBRE DE TEMPORADAS
+   Las APIs devuelven temporadas de año simple con nombres distintos:
+     '2020' → '2020/2021'
+     '2021' → '2021/2022'
+     '2022' → '2022/2023'
+   Todas las demás temporadas (ej. '2025/2026', '2025') se devuelven
+   sin cambio.
+
+2. FILTRO DE TEMPORADAS FUTURAS
+   El endpoint /api/seasons filtra temporadas cuyo año de inicio sea
+   mayor al año actual, para no mostrar temporadas sin datos.
+
+3. WIRES vs EXPENSES
+   El servidor y el cliente distinguen dentro de GrwExpensesAPI los
+   conceptos considerados "Wires" (transferencias):
+     - Liquidation
+     - Pick & Pack
+     - Advances
+   Estos se muestran en sección separada en todas las vistas de gastos.
+
+4. ADJ REPORT — CRUCE DE DATOS
+   El endpoint /api/adj-season-report llama a GrwAdjByPostDateAPI una
+   vez por cada año del rango (para poder etiquetar en qué año se posteó
+   cada ajuste), y cruza con GrwNetSalesByShipDateAPI para obtener
+   Ship_Date por Order_No. Finalmente cruza con trouble-claims.json para
+   las fechas de reclamo y calcula días de demora.
+
+5. CÁLCULO DE BALANCE
+   Balance = Net Sales - Total Expenses - Total Wires
+   Para temporadas "cerradas" (año fin ≤ 2025), el sistema aplica un
+   ajuste que lleva el balance a cero, representando la liquidación final.
+
+
+================================================================================
+FRECUENCIA DE ACTUALIZACIÓN
+================================================================================
+
+APIs iSolve          Tiempo real (cada llamada consulta en vivo)
+                     Auto-refresh opcional cada 5 minutos en el dashboard.
+
+supplemental-data    Manual. Se actualiza leyendo el PDF del Grower Statement
+.json                y editando el archivo con los valores de esa temporada.
+                     Cada temporada tiene su campo "asOf" indicando la fecha
+                     del último dato capturado.
+
+trouble-claims.json  Manual. Se actualiza con el reporte "Trouble Claims"
+                     que se descarga en PDF desde iSolve.
+
+================================================================================

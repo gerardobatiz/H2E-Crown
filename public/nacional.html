@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>H2E — Ventas Nacional (CBE)</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .section-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text2); margin: 20px 0 10px;
+  }
+
+  /* Acum summary cards */
+  .acum-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .acum-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .acum-card h4 {
+    font-size: 13px; font-weight: 700;
+    color: var(--gm); margin: 0 0 10px;
+    text-transform: capitalize;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 7px;
+  }
+  .acum-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; padding: 4px 0; color: var(--text2);
+    border-bottom: 1px solid var(--bg2);
+  }
+  .acum-row:last-child { border-bottom: none; }
+  .acum-row.hl { color: var(--text); font-weight: 600; }
+  .acum-row .val { font-variant-numeric: tabular-nums; }
+
+  /* Product tabs */
+  .prod-tabs {
+    display: flex; gap: 0; margin-bottom: 0;
+    border-bottom: 2px solid var(--border);
+  }
+  .prod-tab {
+    padding: 8px 22px; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+    color: var(--text2); background: transparent; transition: all .15s;
+    margin-bottom: -2px;
+  }
+  .prod-tab:hover  { background: var(--bg2); color: var(--text); }
+  .prod-tab.active { background: var(--bg); color: var(--text);
+                     border-color: var(--border); border-bottom-color: var(--bg); }
+
+  /* Table helpers */
+  .num-col { text-align: right; font-variant-numeric: tabular-nums; }
+  .neg     { color: #e74c3c; }
+  .dim     { color: var(--text2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">H2E &nbsp;|&nbsp; <em>CBE</em> &nbsp;— Ventas Nacional</div>
+  <span id="ts">Cargando…</span>
+</header>
+
+<main>
+
+  <!-- Summary by product -->
+  <div class="section-title">Resumen por producto</div>
+  <div class="acum-grid" id="acumGrid"></div>
+
+  <!-- Grand total KPIs -->
+  <div class="kpis" id="kpis"></div>
+
+  <!-- Detail table -->
+  <div class="tcard">
+    <div class="thead-bar">
+      <h3 id="ttitle" style="margin:0">—</h3>
+      <div class="acts">
+        <input class="search" id="search" type="text" placeholder="Buscar…" oninput="applyRender()">
+        <button class="btn btn-outline btn-sm" onclick="exportCSV()">⬇ CSV</button>
+        <button class="btn btn-primary btn-sm" onclick="loadData()">↻ Actualizar</button>
+      </div>
+    </div>
+
+    <div class="prod-tabs" id="prodTabs"></div>
+
+    <div class="twrap" id="twrap"><div class="empty">Cargando…</div></div>
+    <div class="sbar"><span id="sl">—</span><span id="sr">—</span></div>
+  </div>
+
+</main>
+
+<script>
+/* ── State ──────────────────────────────────────────────────────────────────── */
+let allData       = {};
+let activeProduct = '';
+
+/* ── Load ───────────────────────────────────────────────────────────────────── */
+async function loadData() {
+  document.getElementById('ts').textContent = 'Cargando…';
+  try {
+    const res  = await fetch('/api/nacional');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    allData       = data;
+    activeProduct = data.products[0] || '';
+    renderAll();
+    document.getElementById('ts').textContent = `Actualizado: ${new Date().toLocaleTimeString('es-MX')}`;
+  } catch (err) {
+    document.getElementById('ts').textContent = 'Error';
+    document.getElementById('twrap').innerHTML =
+      `<div class="empty" style="color:#e74c3c">Error: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function renderAll() {
+  renderAcum();
+  renderKPIs();
+  renderProdTabs();
+  applyRender();
+}
+
+/* ── Acum cards ─────────────────────────────────────────────────────────────── */
+const ACUM_LABELS = {
+  'venta':           'Venta bruta',
+  'pagos':           'Pagos recibidos',
+  'por pagar':       'Por pagar',
+  'comision cbe':    'Comisión CBE',
+  'comision pagada': 'Comisión pagada',
+  'balance p/h2e':   'Balance H2E',
+};
+const ACUM_HL = new Set(['balance p/h2e', 'por pagar']);
+
+function renderAcum() {
+  const { acum } = allData;
+  if (!acum?.length) { document.getElementById('acumGrid').innerHTML = ''; return; }
+
+  document.getElementById('acumGrid').innerHTML = acum.map(row => {
+    const prod   = row['Producto'] || '—';
+    const fields = Object.entries(row).filter(([k]) => k !== 'Producto');
+    return `
+      <div class="acum-card">
+        <h4>${escHtml(prod)}</h4>
+        ${fields.map(([k, v]) => {
+          const label = ACUM_LABELS[k.toLowerCase()] || k;
+          const hl    = ACUM_HL.has(k.toLowerCase());
+          return `<div class="acum-row${hl ? ' hl' : ''}">
+            <span>${escHtml(label)}</span>
+            <span class="val">${fmtAmt(v)}</span>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }).join('');
+}
+
+/* ── KPI totals ─────────────────────────────────────────────────────────────── */
+function renderKPIs() {
+  const { acum } = allData;
+  if (!acum?.length) { document.getElementById('kpis').innerHTML = ''; return; }
+
+  const sum  = key => acum.reduce((s, r) => s + (r[key] ?? 0), 0);
+  const kpis = [
+    { label: 'Venta total',      value: fmtAmt(sum('venta')) },
+    { label: 'Pagos recibidos',  value: fmtAmt(sum('pagos')) },
+    { label: 'Por pagar',        value: fmtAmt(sum('por pagar')) },
+    { label: 'Balance H2E',      value: fmtAmt(sum('balance p/h2e')) },
+    { label: 'Comisión CBE',     value: fmtAmt(sum('comision cbe')) },
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(k =>
+    `<div class="kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value">${k.value}</div></div>`
+  ).join('');
+}
+
+/* ── Product tabs ───────────────────────────────────────────────────────────── */
+function renderProdTabs() {
+  const { products, sheets } = allData;
+  document.getElementById('prodTabs').innerHTML = products.map(p => {
+    const n = (sheets[p] || []).length;
+    return `<div class="prod-tab${p === activeProduct ? ' active' : ''}" onclick="switchProduct('${escHtml(p)}')">${escHtml(p)} <span style="font-size:10px;opacity:.6">${n}</span></div>`;
+  }).join('');
+}
+
+function switchProduct(name) {
+  activeProduct = name;
+  renderProdTabs();
+  document.getElementById('search').value = '';
+  applyRender();
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────────── */
+const COLS     = ['Fecha','Manifiesto','Cliente','Producto','Enviadas','Reportadas','x reportar','Precio','Venta','Gastos','Comisión CBE','Total','Real + Est'];
+const NUM_COLS = new Set(['Enviadas','Reportadas','x reportar','Precio','$ KG','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
+const AMT_COLS = new Set(['Precio','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
+
+function applyRender() {
+  const rows = (allData.sheets || {})[activeProduct] || [];
+  const q    = document.getElementById('search').value.toLowerCase().trim();
+  const cols = COLS.filter(c => rows.some(r => r[c] != null && r[c] !== ''));
+
+  const filtered = q
+    ? rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q)))
+    : rows;
+
+  document.getElementById('ttitle').textContent = activeProduct;
+
+  if (!filtered.length) {
+    document.getElementById('twrap').innerHTML = `<div class="empty">Sin datos</div>`;
+    document.getElementById('sl').textContent  = '0 filas';
+    document.getElementById('sr').textContent  = '';
+    return;
+  }
+
+  const head = `<thead><tr>${cols.map(c =>
+    `<th class="${NUM_COLS.has(c) ? 'num-col' : ''}">${escHtml(c)}</th>`
+  ).join('')}</tr></thead>`;
+
+  const body = filtered.map(r => `<tr>${cols.map(c => {
+    const v = r[c];
+    if (v === null || v === '' || v === undefined)
+      return `<td class="${NUM_COLS.has(c) ? 'num-col' : ''}"><span class="rno">—</span></td>`;
+    if (NUM_COLS.has(c)) {
+      const n   = parseFloat(v);
+      if (!isNaN(n)) {
+        const txt = AMT_COLS.has(c) ? fmtAmt(n) : fmtN(n);
+        const cls = `num-col${n < 0 ? ' neg' : n === 0 ? ' dim' : ''}`;
+        return `<td class="${cls}">${txt}</td>`;
+      }
+    }
+    return `<td>${escHtml(String(v))}</td>`;
+  }).join('')}</tr>`).join('');
+
+  document.getElementById('twrap').innerHTML =
+    `<table>${head}<tbody>${body}</tbody></table>`;
+
+  const totEnv  = filtered.reduce((s, r) => s + (r['Enviadas']      ?? 0), 0);
+  const totVent = filtered.reduce((s, r) => s + (r['Venta']         ?? 0), 0);
+  const totNet  = filtered.reduce((s, r) => s + (r['Total']         ?? 0), 0);
+
+  document.getElementById('sl').textContent = `${filtered.length} de ${rows.length} ventas`;
+  document.getElementById('sr').textContent =
+    `Cajas: ${fmtN(totEnv)} · Venta: ${fmtAmt(totVent)} · Neto H2E: ${fmtAmt(totNet)}`;
+}
+
+/* ── CSV export ─────────────────────────────────────────────────────────────── */
+function exportCSV() {
+  const rows = (allData.sheets || {})[activeProduct] || [];
+  const cols = COLS.filter(c => rows.some(r => r[c] != null));
+  const q    = document.getElementById('search').value.toLowerCase().trim();
+  const data = q ? rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q))) : rows;
+  const esc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv  = [cols.map(esc).join(','), ...data.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `CBE_${activeProduct}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+/* ── Helpers ────────────────────────────────────────────────────────────────── */
+const fmtAmt = n => {
+  if (n === null || n === undefined) return '—';
+  const abs = Math.abs(n);
+  const s   = `$${abs.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return n < 0 ? `(${s})` : s;
+};
+const fmtN   = n => (n === null || n === undefined) ? '—' : Math.round(n).toLocaleString('es-MX');
+const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+loadData();
+</script>
+</body>
+</html>
