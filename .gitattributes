@@ -1,0 +1,17 @@
+# Normalizar saltos de línea a LF en el repositorio
+* text=auto eol=lf
+
+# Archivos de texto explícitos
+*.html  text eol=lf
+*.js    text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.py    text eol=lf
+*.bat   text eol=lf
+
+# Archivos binarios (sin conversión de saltos de línea)
+*.jpg   binary
+*.png   binary
+*.pdf   binary
+*.xlsm  binary

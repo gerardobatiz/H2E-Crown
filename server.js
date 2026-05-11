@@ -11,6 +11,10 @@ const BASE_URL = 'https://crowncity.isolveproduce.net';
 const AUTH_B64 = Buffer.from('h2e:Solvegbe0281').toString('base64');
 const agent    = new https.Agent({ rejectUnauthorized: false });
 
+const axiosOpts = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
+const apiCall   = url => axios.get(`${BASE_URL}/${url}`, axiosOpts)
+  .then(r => Array.isArray(r.data) ? r.data : []).catch(() => []);
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json({ limit: '5mb' }));
 
@@ -43,11 +47,7 @@ function proxy(apiFile) {
     const url = `${BASE_URL}/${apiFile}${qs ? '?' + qs : ''}`;
     console.log(`[${new Date().toLocaleTimeString()}] → ${url}`);
     try {
-      const { data } = await axios.get(url, {
-        headers: { Authorization: `Basic ${AUTH_B64}` },
-        httpsAgent: agent,
-        timeout: 30000,
-      });
+      const { data } = await axios.get(url, axiosOpts);
       const arr = Array.isArray(data) ? data : [];
       res.json(arr.map(r => r.Season_Name && SEASON_RENAME[r.Season_Name]
         ? { ...r, Season_Name: renameSeason(r.Season_Name) } : r));
@@ -79,19 +79,14 @@ function normSeason(s) {
 // ── Temporadas disponibles — consulta 3 APIs con rango amplio ─────────────────
 app.get('/api/seasons', async (req, res) => {
   const now   = new Date();
-  const dFrom = `1/1/2015`;   // rango amplio para capturar temporadas históricas
+  const dFrom = `1/1/2015`;
   const dTo   = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
-
-  const call = url => axios.get(`${BASE_URL}/${url}`, opts)
-    .then(r => Array.isArray(r.data) ? r.data : [])
-    .catch(() => []);
 
   try {
     const [sp, ss, ex] = await Promise.all([
-      call(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-      call(`GrwNetSalesByShipDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-      call(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwNetSalesByShipDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
     ]);
 
     const all     = renameAll([...sp, ...ss, ...ex]);
@@ -116,8 +111,7 @@ app.get('/api/debug-seasons', async (req, res) => {
   const now   = new Date();
   const dFrom = `1/1/${now.getFullYear() - 2}`;
   const dTo   = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
-  const call  = url => axios.get(`${BASE_URL}/${url}`, opts)
+  const call  = url => axios.get(`${BASE_URL}/${url}`, axiosOpts)
     .then(r => Array.isArray(r.data) ? r.data : [])
     .catch(e => ({ error: e.message }));
 
@@ -150,17 +144,14 @@ app.get('/api/balance-summary', async (req, res) => {
   const now   = new Date();
   const dFrom = '1/1/2015';
   const dTo   = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
-  const call  = url => axios.get(`${BASE_URL}/${url}`, opts)
-    .then(r => Array.isArray(r.data) ? r.data : []).catch(() => []);
 
   console.log(`[Balance Summary] ${dFrom} → ${dTo}`);
 
   try {
     const [sp, ex, ad] = (await Promise.all([
-      call(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-      call(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-      call(`GrwAdjByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+      apiCall(`GrwAdjByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
     ])).map(renameAll);
 
     const map = {};
@@ -223,29 +214,21 @@ app.get('/api/statement', async (req, res) => {
   const mtdFrom   = `${now.getMonth()+1}/1/${now.getFullYear()}`;
   const mtdTo     = stdTo;
 
-  const call = url =>
-    axios.get(`${BASE_URL}/${url}`, {
-      headers: { Authorization: `Basic ${AUTH_B64}` },
-      httpsAgent: agent, timeout: 30000,
-    })
-    .then(r => Array.isArray(r.data) ? r.data : [])
-    .catch(e => { console.error('  API err:', e.message); return []; });
-
   console.log(`[Statement] season=${season}  STD ${stdFrom}→${stdTo}  MTD ${mtdFrom}→${mtdTo}`);
 
   try {
     const [spStd, spMtd, ssStd, ssMtd, exStd, exMtd, adStd, adMtd, inv, pAdj] =
       (await Promise.all([
-        call(`GrwSalesByPostDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
-        call(`GrwSalesByPostDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
-        call(`GrwNetSalesByShipDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
-        call(`GrwNetSalesByShipDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
-        call(`GrwExpensesAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
-        call(`GrwExpensesAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
-        call(`GrwAdjByPostDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
-        call(`GrwAdjByPostDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
-        call(`GrwInventoryAPI.aspx?dAsOf=${stdTo}`),
-        call(`GrwGrwPendingAdjByLotAPI.aspx`),
+        apiCall(`GrwSalesByPostDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
+        apiCall(`GrwSalesByPostDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
+        apiCall(`GrwNetSalesByShipDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
+        apiCall(`GrwNetSalesByShipDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
+        apiCall(`GrwExpensesAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
+        apiCall(`GrwExpensesAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
+        apiCall(`GrwAdjByPostDateAPI.aspx?dFrom=${stdFrom}&dTo=${stdTo}`),
+        apiCall(`GrwAdjByPostDateAPI.aspx?dFrom=${mtdFrom}&dTo=${mtdTo}`),
+        apiCall(`GrwInventoryAPI.aspx?dAsOf=${stdTo}`),
+        apiCall(`GrwGrwPendingAdjByLotAPI.aspx`),
       ])).map(renameAll);
 
     const bySeason = arr => arr.filter(r => r['Season_Name'] === season);
@@ -357,11 +340,8 @@ app.get('/api/expenses-by-season', async (req, res) => {
   const now   = new Date();
   const dFrom = req.query.dFrom || '1/1/2015';
   const dTo   = req.query.dTo   || `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
 
-  const raw  = await axios.get(`${BASE_URL}/GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`, opts)
-    .then(r => Array.isArray(r.data) ? r.data : [])
-    .catch(() => []);
+  const raw  = await apiCall(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`);
 
   const WIRES = new Set(['Liquidation', 'Pick & Pack', 'Advances']);
 
@@ -405,16 +385,13 @@ app.get('/api/statement-by-season', async (req, res) => {
   const now   = new Date();
   const dFrom = '1/1/2015';
   const dTo   = `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
-  const call  = url => axios.get(`${BASE_URL}/${url}`, opts)
-    .then(r => Array.isArray(r.data) ? r.data : []).catch(() => []);
 
   const [sp, ad, ex, inv, pAdj] = (await Promise.all([
-    call(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-    call(`GrwAdjByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-    call(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
-    call(`GrwInventoryAPI.aspx?dAsOf=${dTo}`),
-    call(`GrwGrwPendingAdjByLotAPI.aspx`),
+    apiCall(`GrwSalesByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+    apiCall(`GrwAdjByPostDateAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+    apiCall(`GrwExpensesAPI.aspx?dFrom=${dFrom}&dTo=${dTo}`),
+    apiCall(`GrwInventoryAPI.aspx?dAsOf=${dTo}`),
+    apiCall(`GrwGrwPendingAdjByLotAPI.aspx`),
   ])).map(renameAll);
 
   const WIRES = new Set(['Liquidation', 'Pick & Pack', 'Advances']);
@@ -492,7 +469,6 @@ app.get('/api/adj-season-report', async (req, res) => {
   const now   = new Date();
   const dFrom = req.query.dFrom || `1/1/${now.getFullYear() - 2}`;
   const dTo   = req.query.dTo   || `${now.getMonth()+1}/${now.getDate()}/${now.getFullYear()}`;
-  const opts  = { headers: { Authorization: `Basic ${AUTH_B64}` }, httpsAgent: agent, timeout: 30000 };
 
   const parseYear = s => { const p = s.trim().split('/'); return parseInt(p[p.length - 1]); };
   const fromYear  = parseYear(dFrom);
@@ -511,7 +487,7 @@ app.get('/api/adj-season-report', async (req, res) => {
   const [chunks, shipRaw] = await Promise.all([
     Promise.all(
       calls.map(({ year, url }) =>
-        axios.get(`${BASE_URL}/${url}`, opts)
+        axios.get(`${BASE_URL}/${url}`, axiosOpts)
           .then(r => (Array.isArray(r.data) ? r.data : [])
             .filter(rec => rec['Season_Name'] && rec['Season_Name'] !== 'No Data')
             .map(rec => ({ ...rec, Año_Post: year }))
@@ -519,9 +495,7 @@ app.get('/api/adj-season-report', async (req, res) => {
           .catch(() => [])
       )
     ),
-    axios.get(`${BASE_URL}/GrwNetSalesByShipDateAPI.aspx?dFrom=${shipFrom}&dTo=${dTo}`, opts)
-      .then(r => Array.isArray(r.data) ? r.data : [])
-      .catch(() => [])
+    apiCall(`GrwNetSalesByShipDateAPI.aspx?dFrom=${shipFrom}&dTo=${dTo}`)
   ]);
 
   const shipMap = {};

@@ -1,0 +1,1541 @@
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const today = (() => { const d = new Date(); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; })();
+const fy    = `1/1/${new Date().getFullYear()}`;
+const toIso = s => { const [m,d,y] = s.split('/'); return `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`; };
+const fromIso = s => { const [y,m,d] = s.split('-'); return `${+m}/${+d}/${y}`; };
+
+const fmtUSD = n => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
+const fmtNum = n => new Intl.NumberFormat('en-US').format(Math.round(n));
+
+// Null-safe formatters shared by pivot renderers
+const fC  = n => n == null ? `<span class="rno">—</span>` : (n < 0 ? `<span class="rn">(${fmtUSD(Math.abs(n))})</span>` : fmtUSD(n));
+const fCw = n => n == null ? `<span class="rno">—</span>` : (n < 0 ? `(${fmtUSD(Math.abs(n))})` : fmtUSD(n));
+const fN  = n => n != null ? Math.round(n).toLocaleString('en-US') : `<span class="rno">—</span>`;
+
+// ── Module Config ─────────────────────────────────────────────────────────────
+const MODS = [
+  { id:'statement',   label:'GWR Statement',        emoji:'📊',
+    ep:'/api/statement',        ft:'statement',
+    amt:[], qty:[],
+    desc:'Consolidated Grower Statement from all 6 APIs' },
+
+  { id:'sales-ship',  label:'Sales / Ship Date',    emoji:'🚢',
+    ep:'/api/sales-ship-date',  ft:'range',
+    defFrom: '1/1/2015', defTo: today,
+    amt:['Gross_Amt'], qty:['Ship_Qty','Inv_Qty'],
+    desc:'Net sales by shipment date' },
+
+  { id:'sales-post',  label:'Sales / Post Date',    emoji:'📋',
+    ep:'/api/sales-post-date',  ft:'range',
+    defFrom: '1/1/2015', defTo: today,
+    amt:['Amount','Avg_Price'], qty:['Qty'],
+    desc:'Net sales by post/settlement date' },
+
+  { id:'inventory',   label:'Inventory',            emoji:'📦',
+    ep:'/api/inventory',        ft:'asof',
+    defAsOf: today,
+    amt:['Gross Amount','Gross_Amount'], qty:['Qty'],
+    desc:'Current inventory snapshot' },
+
+  { id:'expenses',    label:'Expenses',             emoji:'💸',
+    ep:'/api/expenses',         ft:'range-concept',
+    defFrom: '1/1/2015', defTo: today,
+    amt:['Amount'], qty:[],
+    desc:'Grower expenses by post date' },
+
+  { id:'adj-post',    label:'Adj / Post Date',      emoji:'🔧',
+    ep:'/api/adj-post-date',    ft:'range',
+    defFrom: '1/1/2015', defTo: today,
+    amt:['Amount','Adj_Amt'], qty:[],
+    desc:'Price adjustments by post date' },
+
+  { id:'pend-adj',    label:'Pending Adj',          emoji:'⏳',
+    ep:'/api/pending-adj',      ft:'none',
+    amt:['Pend_Adj_Amount','Adj_Amt'], qty:['Pend_Adj_Pkgs'],
+    desc:'Open pending adjustments by lot' },
+
+  { id:'adj-report',  label:'Adj Report',            emoji:'📅',
+    ep:'/api/adj-season-report', ft:'adj-report',
+    defFrom: '1/1/2015', defTo: today,
+    amt:['Amount','Adj_Amt'], qty:[],
+    desc:'Adjustments with post year and out-of-season flag' },
+
+  { id:'stmt-by-season', label:'Statement by Season', emoji:'📈',
+    ep:'/api/statement-by-season', ft:'none',
+    amt:[], qty:[],
+    desc:'GWR Statement pivot — rows = statement lines, columns = seasons' },
+
+  { id:'expenses-season', label:'Expenses by Season', emoji:'💸',
+    ep:'/api/expenses-by-season', ft:'expenses-season',
+    defFrom: '1/1/2015', defTo: today,
+    amt:[], qty:[],
+    desc:'GWR Expenses pivot by concept and season' },
+
+  { id:'sales-season', label:'Sales by Season',     emoji:'📊',
+    ep:'/api/statement-by-season', ft:'none',
+    amt:[], qty:[],
+    desc:'Sales pivot — rows = seasons, columns = sales metrics' },
+];
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let mIdx           = 0;
+let raw            = [];
+let view           = [];
+let sCol           = null;
+let sDir           = 1;
+let arTimer        = null;
+let selectedSeason = '2025/2026';
+let pivotData         = null;
+let pivotSortCol      = 'total';
+let pivotSortDir      = -1;
+let stmtBySeasonData  = null;
+let salesBySeasonData = null;
+let lastStatementData = null;
+let labelFilter       = '';
+let columnFilters     = {};
+let seasonPillFilter  = '';
+let pkgsBySeason      = null;   // { '2025/2026': 191410, ... }
+
+async function fetchPkgsBySeason() {
+  if (pkgsBySeason) return pkgsBySeason;
+  try {
+    const d = await fetch('/api/statement-by-season').then(r => r.json());
+    pkgsBySeason = {};
+    for (const [s, v] of Object.entries(d.data || {}))
+      pkgsBySeason[s] = v.pkgsTotal || 0;
+  } catch(e) { pkgsBySeason = {}; }
+  return pkgsBySeason;
+}
+
+function switchMod(i) {
+  clearInterval(arTimer); arTimer = null;
+  mIdx = i; raw = []; view = []; sCol = null; pivotData = null; labelFilter = ''; columnFilters = {}; seasonPillFilter = '';
+  document.getElementById('labelSel').style.display = 'none';
+  document.getElementById('col-filters').innerHTML = '';
+  document.getElementById('season-pills').innerHTML = '';
+  toggleDateRange(true);
+  document.querySelectorAll('.tab').forEach((t,j) => t.classList.toggle('active', j===i));
+  document.getElementById('ttitle').textContent = MODS[i].label;
+  document.getElementById('search').value = '';
+  buildFilters();
+  renderKPIs([]);
+  setBody('<div class="empty">Set the filters above and click <strong>Load Data</strong></div>');
+  setSL('—'); setSR('—');
+  if (MODS[i].ft === 'none') loadData();
+}
+
+// ── Filters ───────────────────────────────────────────────────────────────────
+function buildFilters() {
+  const m   = MODS[mIdx];
+  const box = document.getElementById('filters');
+  let h = '';
+
+  // Selector de temporada rápido para módulos con fechas
+  const hasDateFilter = ['range','range-concept','expenses-season','adj-report'].includes(m.ft);
+  if (hasDateFilter) {
+    const selStyle = `padding:7px 10px;border:2px solid var(--gm);border-radius:7px;font-size:13px;
+                      font-weight:600;color:var(--gd);background:var(--card);cursor:pointer;
+                      outline:none;min-width:150px;appearance:none;
+                      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%232d6a4f' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+                      background-repeat:no-repeat;background-position:right 8px center;padding-right:28px`;
+    h += fg('📅 Season',
+      `<select id="fSeasonJump" onchange="jumpToSeason(this.value)" style="${selStyle}">
+         <option value="">— Select —</option>
+       </select>`);
+    h += `<div style="width:1px;background:var(--border);align-self:stretch;margin:0 4px"></div>`;
+  }
+
+  if (m.ft === 'range' || m.ft === 'range-concept') {
+    h += fg('From',  `<input type="date" id="fFrom" value="${toIso(m.defFrom||fy)}">`);
+    h += fg('To',    `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+    if (m.ft === 'range-concept')
+      h += fg('Concept (optional)', `<input type="text" id="fConcept" placeholder="All" style="width:120px">`);
+  } else if (m.ft === 'expenses-season') {
+    h += fg('From', `<input type="date" id="fFrom" value="${toIso(m.defFrom||'1/1/2015')}">`);
+    h += fg('To',   `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+  } else if (m.ft === 'adj-report') {
+    h += fg('Adj. Date From', `<input type="date" id="fFrom" value="${toIso(m.defFrom||fy)}">`);
+    h += fg('Adj. Date To',   `<input type="date" id="fTo"   value="${toIso(m.defTo||today)}">`);
+    h += fg('Min. Days', `<input type="number" id="fMinDias" min="0" placeholder="All" style="width:80px" oninput="applyRender()">`);
+  } else if (m.ft === 'asof') {
+    h += fg('As-Of Date', `<input type="date" id="fAsOf" value="${toIso(m.defAsOf||today)}">`);
+  } else if (m.ft === 'statement') {
+    h += fg('Season', `<select id="season-select" onchange="selectSeason(this.value)"><option disabled selected>Loading…</option></select>`);
+  } else {
+    h += `<span style="color:var(--muted);font-size:13px">📡 ${m.desc} — loads all available data automatically</span>`;
+  }
+
+  if (m.ft !== 'none' && m.ft !== 'statement')
+    h += `<button class="btn btn-primary" onclick="loadData()">Load Data</button>`;
+
+  h += `<label class="ar-toggle"><input type="checkbox" id="arcb" onchange="toggleAR(this.checked)"> Auto-refresh (5 min)</label>`;
+
+  box.innerHTML = h;
+
+  if (m.ft === 'statement') loadSeasons();
+  if (hasDateFilter) loadFiltersSeasons();
+}
+
+const fg = (label, ctrl) =>
+  `<div class="fg"><label>${label}</label>${ctrl}</div>`;
+
+function buildQS() {
+  const m = MODS[mIdx]; const p = new URLSearchParams();
+  if (m.ft === 'range' || m.ft === 'range-concept' || m.ft === 'adj-report' || m.ft === 'expenses-season') {
+    p.set('dFrom', fromIso(document.getElementById('fFrom').value));
+    p.set('dTo',   fromIso(document.getElementById('fTo').value));
+    const c = document.getElementById('fConcept')?.value.trim();
+    if (c) p.set('Concept', c);
+  } else if (m.ft === 'asof') {
+    p.set('dAsOf', fromIso(document.getElementById('fAsOf').value));
+  } else if (m.ft === 'statement') {
+    p.set('season', selectedSeason || '2025/2026');
+  }
+  return p.toString();
+}
+
+// ── Data Load ─────────────────────────────────────────────────────────────────
+async function loadData() {
+  const m = MODS[mIdx];
+  setBody('<div class="loading"><div class="spinner"></div>Connecting to iSolve…</div>');
+  renderKPIs([]); setSL('Loading…'); setSR('');
+  try {
+    const qs  = buildQS();
+    const url = `${m.ep}${qs ? '?'+qs : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data && data.error) throw new Error(data.error);
+    raw = Array.isArray(data) ? data : [];
+    document.getElementById('ts').textContent =
+      `Last updated: ${new Date().toLocaleTimeString('en-US')}`;
+    if (m.id === 'stmt-by-season') {
+      renderStatementBySeason(data);
+    } else if (m.id === 'sales-season') {
+      renderSalesBySeason(data);
+    } else if (m.ft === 'statement') {
+      renderStatement(data);
+    } else if (m.ft === 'expenses-season') {
+      pivotData = data; pivotSortCol = 'total'; pivotSortDir = -1;
+      fetchPkgsBySeason().then(() => renderExpensesBySeason(data));
+    } else {
+      raw = Array.isArray(data) ? data : [];
+      if (m.id === 'expenses') {
+        fetchPkgsBySeason().then(() => {
+          applyRender();
+          populateLabelFilter(raw);
+          buildSeasonPills(raw);
+          buildColumnFilters(raw);
+        });
+      } else {
+        applyRender();
+        populateLabelFilter(raw);
+        buildSeasonPills(raw);
+        buildColumnFilters(raw);
+      }
+    }
+  } catch (e) {
+    setBody(`<div class="err"><strong>Error loading data:</strong> ${e.message}</div>`);
+    setSL('Error'); setSR('');
+  }
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function applyRender() {
+  const q = (document.getElementById('search')?.value || '').toLowerCase();
+  view = q
+    ? raw.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)))
+    : [...raw];
+
+  if (labelFilter)
+    view = view.filter(r => r['Label_Code'] === labelFilter);
+
+  if (seasonPillFilter && raw.length && 'Season_Name' in raw[0])
+    view = view.filter(r => r['Season_Name'] === seasonPillFilter);
+
+  for (const [col, val] of Object.entries(columnFilters))
+    if (val) view = view.filter(r => String(r[col] ?? '') === val);
+
+  const minDias = parseInt(document.getElementById('fMinDias')?.value);
+  if (!isNaN(minDias) && minDias > 0)
+    view = view.filter(r => typeof r['Dias'] === 'number' && r['Dias'] >= minDias);
+
+  if (sCol !== null && view.length) {
+    view.sort((a, b) => {
+      const va = a[sCol], vb = b[sCol];
+      if (typeof va === 'number') return (va - vb) * sDir;
+      return String(va).localeCompare(String(vb)) * sDir;
+    });
+  }
+  if (MODS[mIdx].id === 'expenses-season') {
+    if (pivotData) renderExpensesBySeason(pivotData);
+  } else {
+    renderKPIs(view);
+    if      (MODS[mIdx].id === 'adj-report') renderAdjReport(view);
+    else if (MODS[mIdx].id === 'expenses')   renderExpensesTable(view);
+    else renderTable(view);
+  }
+}
+
+function renderKPIs(data) {
+  const m = MODS[mIdx];
+  let cards = kpiCard('Records', fmtNum(data.length), 'total rows');
+
+  if (data.length) {
+    let totAmt = 0, totQty = 0, amtF = null, qtyF = null;
+
+    for (const f of m.amt) {
+      if (f in data[0] && f !== 'Avg_Price') {
+        totAmt = data.reduce((s,r) => s + (+r[f]||0), 0);
+        amtF = f;
+        cards += kpiCard(f, fmtUSD(totAmt), 'total');
+        break;
+      }
+    }
+    for (const f of m.qty) {
+      if (f in data[0]) {
+        totQty = data.reduce((s,r) => s + (+r[f]||0), 0);
+        qtyF = f;
+        cards += kpiCard(f, fmtNum(totQty), 'units');
+        break;
+      }
+    }
+    if (amtF && qtyF && totQty)
+      cards += kpiCard('Avg Price', fmtUSD(totAmt / totQty), 'por caja');
+
+    const gc = new Set(data.map(r => r['Grower Code']).filter(Boolean));
+    if (gc.size) cards += kpiCard('Growers', gc.size, 'unique');
+  }
+
+  document.getElementById('kpis').innerHTML = cards;
+}
+
+const kpiCard = (l, v, s) =>
+  `<div class="kpi"><div class="kpi-l">${l}</div><div class="kpi-v">${v}</div><div class="kpi-s">${s}</div></div>`;
+
+function renderTable(data) {
+  if (!data.length) {
+    setBody('<div class="empty">No records found for the selected filters</div>');
+    setSL('0 records'); setSR('');
+    return;
+  }
+
+  const m    = MODS[mIdx];
+  const cols = Object.keys(data[0]);
+  const isAmt      = c => m.amt.includes(c);
+  const isQty      = c => m.qty.includes(c);
+  const isNum      = c => typeof data[0][c] === 'number';
+  const isAvgPrice = c => c === 'Avg_Price' || (c.toLowerCase().startsWith('avg') && isNum(c));
+  const isId       = c => /[ _](No|ID|Code|Num)\.?$/i.test(c);
+
+  // ── Column sums ────────────────────────────────────────────────────────────
+  const sums = {};
+  cols.forEach(c => { if (isNum(c)) sums[c] = data.reduce((s, r) => s + (+r[c] || 0), 0); });
+
+  const firstAmtF = m.amt.find(f => f in sums && !isAvgPrice(f));
+  const firstQtyF = m.qty.find(f => f in sums);
+  const totAmt    = firstAmtF ? sums[firstAmtF] : 0;
+  const totQty    = firstQtyF ? sums[firstQtyF] : 0;
+  const avgPrice  = (firstAmtF && firstQtyF && totQty) ? totAmt / totQty : null;
+
+  // ── Sticky totals row (inside thead so it scrolls with the header) ─────────
+  const BG = 'background:#1b4332';
+  const FG = 'color:#d8f3dc;font-weight:700;font-family:monospace;font-size:12px';
+  let labelDone = false;
+  const totCells = cols.map(c => {
+    if (!isNum(c)) {
+      if (!labelDone) { labelDone = true; return `<th style="${BG};color:#a7f3d0;font-weight:800;text-align:left;font-size:11px;letter-spacing:.4px">TOTAL</th>`; }
+      return `<th style="${BG}"></th>`;
+    }
+    if (isId(c))       return `<th style="${BG};text-align:right;color:#475569">—</th>`;
+    if (isAvgPrice(c)) return avgPrice != null
+        ? `<th style="${BG};${FG};text-align:right">${fmtUSD(avgPrice)}</th>`
+        : `<th style="${BG};text-align:right;color:#475569">—</th>`;
+    if (isAmt(c)) return `<th style="${BG};${FG};text-align:right">${fmtUSD(sums[c])}</th>`;
+    return `<th style="${BG};${FG};text-align:right">${fmtNum(sums[c])}</th>`;
+  }).join('');
+
+  // ── Column headers (sticky — only these stick, not the totals row above) ────
+  const STK = `position:sticky;top:0;z-index:2`;
+  const head = cols.map(c => {
+    const sorted = sCol === c;
+    const si = sorted ? (sDir===1?'↑':'↓') : '↕';
+    return `<th class="${sorted?'sorted':''}" onclick="sortBy('${c}')" style="${STK}">${c}<span class="si">${si}</span></th>`;
+  }).join('');
+
+  // ── Data rows ──────────────────────────────────────────────────────────────
+  const body = data.map((r, idx) => {
+    const cells = ['<td class="row-num r">' + (idx+1) + '</td>',
+      ...cols.map(c => {
+        const v = r[c];
+        if (v == null || v === '') return `<td class="rno">—</td>`;
+        if (isAmt(c) && typeof v === 'number') {
+          const cls = v < 0 ? 'rc rn' : 'rc';
+          return `<td class="${cls}">${fmtUSD(v)}</td>`;
+        }
+        if (isNum(c) || isQty(c)) return `<td class="r">${fmtNum(v)}</td>`;
+        return `<td>${v}</td>`;
+      })
+    ];
+    return `<tr>${cells.join('')}</tr>`;
+  }).join('');
+
+  setBody(`<table>
+    <thead>
+      <tr><th style="${BG};color:#a7f3d0;font-size:11px">Σ</th>${totCells}</tr>
+      <tr><th style="${STK}">#</th>${head}</tr>
+    </thead>
+    <tbody>${body}</tbody>
+  </table>`);
+
+  setSL(`${data.length.toLocaleString()} records`);
+  setSR(raw.length !== data.length ? `filtered from ${raw.length.toLocaleString()} total` : '');
+}
+
+function sortBy(col) {
+  sDir = sCol === col ? sDir * -1 : 1;
+  sCol = col;
+  applyRender();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const setBody = h => document.getElementById('twrap').innerHTML = h;
+const setSL   = t => document.getElementById('sl').textContent = t;
+const setSR   = t => document.getElementById('sr').textContent = t;
+
+function toggleAR(on) {
+  clearInterval(arTimer); arTimer = null;
+  if (on) arTimer = setInterval(loadData, 5 * 60 * 1000);
+}
+
+function exportCSV() {
+  if (!view.length) return;
+  const cols = Object.keys(view[0]);
+  const rows = [cols.join(','), ...view.map(r =>
+    cols.map(c => JSON.stringify(r[c] ?? '')).join(',')
+  )];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')], {type:'text/csv'}));
+  a.download = `${MODS[mIdx].id}_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+}
+
+// ── Label filter ──────────────────────────────────────────────────────────────
+function populateLabelFilter(data) {
+  const sel = document.getElementById('labelSel');
+  if (!data.length || !('Label_Code' in data[0])) { sel.style.display = 'none'; return; }
+  const labels = [...new Set(data.map(r => r['Label_Code']).filter(Boolean))].sort();
+  if (labelFilter && !labels.includes(labelFilter)) labelFilter = '';
+  sel.innerHTML = `<option value="">All Labels</option>` +
+    labels.map(l => `<option value="${l}"${l === labelFilter ? ' selected' : ''}>${l}</option>`).join('');
+  sel.style.display = '';
+}
+
+function filterByLabel(val) {
+  labelFilter = val;
+  applyRender();
+}
+
+// ── Season select ─────────────────────────────────────────────────────────────
+async function loadSeasons() {
+  const sel = document.getElementById('season-select');
+  if (!sel) return;
+  try {
+    const [seasons, pkgs] = await Promise.all([
+      fetch('/api/seasons').then(r => r.json()),
+      fetchPkgsBySeason()
+    ]);
+    if (seasons.error || !seasons.length) throw new Error(seasons.error || 'No seasons');
+
+    // Last season with received packages, fallback to most recent
+    const lastWithPkgs = [...seasons].reverse().find(s => (pkgs[s] || 0) > 0);
+    selectedSeason = lastWithPkgs || seasons[seasons.length - 1];
+
+    sel.innerHTML =
+      `<option value="__summary__">📊 Total Balance — All Seasons</option>` +
+      `<option disabled>──────────────────────</option>` +
+      seasons.map(s =>
+        `<option value="${s}"${s === selectedSeason ? ' selected' : ''}>${s}</option>`
+      ).join('');
+
+    loadData();
+  } catch (e) {
+    sel.innerHTML = `<option disabled>Error: ${e.message}</option>`;
+  }
+}
+
+function selectSeason(s) {
+  selectedSeason = s;
+  if (s === '__summary__') loadBalanceSummary();
+  else loadData();
+}
+
+async function loadBalanceSummary() {
+  setBody('<div class="loading"><div class="spinner"></div>Calculating balance for all seasons…</div>');
+  renderKPIs([]); setSL('All Seasons'); setSR('');
+  document.getElementById('ttitle').textContent = 'Total Balance — All Seasons';
+
+  try {
+    const r    = await fetch('/api/balance-summary');
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+
+    document.getElementById('ts').textContent = `Last updated: ${new Date().toLocaleTimeString('en-US')}`;
+
+    const fmtC = n => {
+      const s = new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(Math.abs(n));
+      return n < 0 ? `<span style="color:#ef4444">(${s})</span>` : `<span style="color:#1b4332">${s}</span>`;
+    };
+
+    // KPI cards
+    document.getElementById('kpis').innerHTML = [
+      kpiCard('Net Sales Total',  new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.netSales), 'all seasons'),
+      kpiCard('Expenses Total',   new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.expenses), 'all seasons'),
+      kpiCard('Balance Total',    new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(Math.abs(data.total.balance)) + (data.total.balance < 0 ? ' deficit' : ''), 'cumulative'),
+      kpiCard('Seasons',          data.rows.length, 'with data'),
+    ].join('');
+
+    // Tabla resumen
+    const rows = data.rows.map((r, i) => `
+      <tr>
+        <td style="font-weight:600;color:var(--gd)">${r.season}</td>
+        <td class="r">${fmtC(r.netSales)}</td>
+        <td class="r">${fmtC(r.expenses)}</td>
+        <td class="r" style="font-weight:700">${fmtC(r.balance)}</td>
+      </tr>`).join('');
+
+    const t = data.total;
+    const totRow = `
+      <tr style="background:var(--gd);color:#fff;font-size:13px">
+        <td style="font-weight:800;padding:10px 12px">CUMULATIVE TOTAL</td>
+        <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.netSales)}</td>
+        <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.expenses)}</td>
+        <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:800">${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(t.balance)}</td>
+      </tr>`;
+
+    setBody(`
+      <table class="stmt-tbl" style="max-width:700px;margin:16px auto">
+        <thead>
+          <tr>
+            <th>Season</th>
+            <th style="text-align:right">Net Sales</th>
+            <th style="text-align:right">Expenses</th>
+            <th style="text-align:right">Balance</th>
+          </tr>
+        </thead>
+        <tbody>${rows}${totRow}</tbody>
+      </table>`);
+
+    setSL(`${data.rows.length} seasons`);
+    setSR(`Cumulative Balance: ${new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(data.total.balance)}`);
+  } catch (e) {
+    setBody(`<div class="err"><strong>Error:</strong> ${e.message}</div>`);
+    setSL('Error'); setSR('');
+  }
+}
+
+// ── GWR Statement renderer ────────────────────────────────────────────────────
+function renderStatement(d) {
+  if (!d || d.error) {
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
+    setSL('Error'); setSR(''); return;
+  }
+  lastStatementData = d;
+
+  const fmtC = n => {
+    const s = new Intl.NumberFormat('en-US', { style:'currency', currency:'USD' }).format(Math.abs(n));
+    return n < 0 ? `(${s})` : s;
+  };
+  const fmtN = n => Math.round(n).toLocaleString('en-US');
+  const na   = `<span class="na">—</span>`;
+
+  const pk = d.packages;
+  const sl = d.sales;
+
+  const seasonEndYearStmt = s => { const p = String(s).trim().split('/'); return parseInt(p[p.length-1]); };
+  const isClosedStmt = seasonEndYearStmt(d.season) <= 2025;
+  const ajustesStmt  = isClosedStmt ? -d.balanceStd : 0;
+  const balanceFinal = d.balanceStd + ajustesStmt;
+
+  const row = (label, std, cls='') =>
+    `<tr class="${cls}"><td>${label}</td><td class="r">${std}</td></tr>`;
+
+  const html = `
+  <div class="stmt-wrap">
+    <div class="stmt-top">
+      <div>
+        <span class="stmt-season">Grower Statement (s${d.season})</span>
+        <span class="stmt-grower">Grower Contract: All &nbsp;|&nbsp; Product: All</span>
+      </div>
+      <span class="stmt-asof">Post Date: ${d.asOf}</span>
+    </div>
+
+    <!-- PACKAGES -->
+    <div class="stmt-stitle">Packages</div>
+    <table class="stmt-tbl">
+      <thead><tr><th>Description</th><th>Season to Date</th></tr></thead>
+      <tbody>
+        ${row('Packages Received',               fmtN(pk.receivedStd), 'tot')}
+        ${row('&nbsp;&nbsp;- Sent to repack',    pk.sentToRepackStd       != null ? fmtN(pk.sentToRepackStd)       : na, 'sub')}
+        ${row('&nbsp;&nbsp;+ Received from repack', pk.receivedFromRepackStd != null ? fmtN(pk.receivedFromRepackStd) : na, 'sub')}
+        <tr class="tot"><td>= Product for Sale</td><td class="r">${pk.productForSaleStd != null ? fmtN(pk.productForSaleStd) : fmtN(pk.receivedStd)}</td></tr>
+        ${row('&nbsp;&nbsp;Dumped, Etc.',        pk.dumpedStd ? fmtN(pk.dumpedStd) : na, 'sub')}
+        ${row('&nbsp;&nbsp;Packages Invoiced',   fmtN(pk.pkgsInvoicedStd), 'sub')}
+        ${row('&nbsp;&nbsp;Pending to Invoice',  fmtN(pk.pendingToInvoiceStd), 'sub')}
+        ${row('- Shipped',                       fmtN(pk.shippedStd))}
+        <tr class="tot"><td>= Warehouse Floor</td><td class="r">${fmtN(pk.warehouseFloorStd)}</td></tr>
+      </tbody>
+    </table>
+
+    <!-- SALES -->
+    <div class="stmt-stitle">Sales</div>
+    <table class="stmt-tbl">
+      <thead><tr><th>Description</th><th>Packages</th><th>Amount</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Invoicing</td>
+          <td class="r">${fmtN(sl.invoicingQtyStd)}</td><td class="r">${fmtC(sl.invoicingAmtStd)}</td>
+        </tr>
+        <tr class="sub">
+          <td>&nbsp;&nbsp;- Adjustment</td>
+          <td></td><td class="r">${fmtC(sl.adjAmtStd)}</td>
+        </tr>
+        <tr class="tot">
+          <td>= Net Sales Total</td>
+          <td></td><td class="r">${fmtC(sl.netStd)}</td>
+        </tr>
+        <tr class="sub">
+          <td>&nbsp;&nbsp;Pending Adjustments</td>
+          <td class="r">${fmtN(sl.pAdjQty)}</td><td class="r">${fmtC(sl.pAdjAmt)}</td>
+        </tr>
+        <tr class="sub">
+          <td>&nbsp;&nbsp;Avg Price (Gross)</td>
+          <td colspan="2" class="r" style="font-weight:600">${sl.avgPriceGrossStd ? fmtC(sl.avgPriceGrossStd) : na}</td>
+        </tr>
+        <tr class="sub">
+          <td>&nbsp;&nbsp;Avg Price (Net)${(pk.dumpedStd || pk.sentToRepackStd) ? ` <span style="font-size:10px;color:var(--muted)">incl. dumped &amp; repack shrinkage</span>` : ''}</td>
+          <td colspan="2" class="r" style="font-weight:700;color:var(--gd)">${sl.avgPriceNetStd ? fmtC(sl.avgPriceNetStd) : na}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- EXPENSES -->
+    <div class="stmt-stitle">Expenses</div>
+    <table class="stmt-tbl">
+      <thead><tr><th>Description</th><th>Amount</th></tr></thead>
+      <tbody>
+        ${d.expenses.map(e =>
+          `<tr><td>${e.concept}</td><td class="r">${fmtC(e.std)}</td></tr>`
+        ).join('')}
+        <tr class="tot">
+          <td>Expenses Total</td>
+          <td class="r">${fmtC(d.expTotStd)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- BALANCE -->
+    ${isClosedStmt ? `
+    <table class="stmt-tbl" style="margin-bottom:0">
+      <tbody>
+        <tr>
+          <td style="width:55%">Balance</td>
+          <td class="r" style="width:45%">${fmtC(d.balanceStd)}</td>
+        </tr>
+        <tr>
+          <td>Adjustments</td>
+          <td class="r">${fmtC(ajustesStmt)}</td>
+        </tr>
+      </tbody>
+    </table>` : ''}
+    <table class="stmt-tbl stmt-bal ${balanceFinal >= 0 ? 'pos' : 'neg'}">
+      <tbody>
+        <tr>
+          <td style="width:55%">${isClosedStmt ? 'Balance Final' : 'Balance'}</td>
+          <td class="r" style="width:45%">${fmtC(balanceFinal)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="stmt-note">
+      ${d.suppAsOf
+        ? `📋 <strong>Supplemental data as of ${d.suppAsOf}:</strong> Sent/Received from Repack · Dumped.<br>
+           ⚖️ <strong>Avg Price (Net)</strong> = Net Sales ÷ Packages Received (includes Dumped and Repack Shrinkage: boxes sent minus boxes recovered).`
+        : `⚠️ <strong>No supplemental data for this season.</strong> Upload the Grower Statement PDF to complete Sent to Repack · Received from Repack · Dumped · Avg Price.`
+      }<br>
+      Generated: ${new Date().toLocaleString('en-US')}
+    </div>
+  </div>`;
+
+  setBody(html);
+  setSL(`Season: ${d.season}`);
+  setSR(`${d.expenses.length} expense concepts`);
+
+  // KPI cards
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Net Sales STD',     fmtC(sl.netStd),          'season to date'),
+    kpiCard('Expenses STD',      fmtC(d.expTotStd),        'season to date'),
+    kpiCard('Balance STD',       fmtC(d.balanceStd),       d.balanceStd >= 0 ? 'positive' : 'deficit'),
+    kpiCard('Pkgs Invoiced STD', fmtN(pk.pkgsInvoicedStd), 'boxes invoiced'),
+    ...(sl.avgPriceNetStd ? [kpiCard('Avg Price (Net)',
+      fmtC(sl.avgPriceNetStd),
+      (pk.dumpedStd || pk.sentToRepackStd) ? 'incl. dumped & repack shrinkage' : 'por caja')] : []),
+  ].join('');
+}
+
+// ── Statement by Season (pivot filas × temporadas) ───────────────────────────
+function renderStatementBySeason(d) {
+  if (!d || d.error) {
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
+    setSL('Error'); setSR(''); return;
+  }
+
+  stmtBySeasonData = d;
+  const { seasons, data, concepts } = d;
+
+  const get = (s, key) => {
+    const sd = data[s];
+    if (!sd) return 0;
+    if (key.startsWith('exp_')) return sd.expenses[key.slice(4)] || 0;
+    return sd[key] || 0;
+  };
+
+  // Packages per season for $/caja computation
+  const pkgs = {};
+  seasons.forEach(s => { pkgs[s] = data[s]?.pkgsTotal || 0; });
+  const totalPkgs = seasons.reduce((a, s) => a + (pkgs[s] || 0), 0);
+
+  // Closed seasons (end year ≤ 2025): Ajustes brings their balance to zero
+  const seasonEndYear = s => { const p = String(s).trim().split('/'); return parseInt(p[p.length-1]); };
+  const isClosed = s => seasonEndYear(s) <= 2025;
+
+  // Show $/caja only for USD rows that don't already represent a per-unit price
+  const showPc = row => row.fmt === 'usd' && !row.totFn && !row.valFn;
+  const dash = `<span class="rno">—</span>`;
+  const PC_HDR  = `text-align:right;font-size:10px;color:#a7f3d0;min-width:70px;white-space:nowrap;letter-spacing:.2px`;
+  const pcCell  = (bg, color) => `text-align:right;font-size:10px;color:${color};font-family:monospace;background:${bg};min-width:70px`;
+
+  // Total columns = 1 (Concepto) + N×2 (value + $/caja) + 1 (Total) + 1 ($/caja Total)
+  const totalCols = seasons.length * 2 + 3;
+
+  const ROWS = [
+    { type:'section', label:'PACKAGES' },
+    { type:'data',    label:'Pkgs Invoiced',              key:'pkgsInvoiced', fmt:'qty' },
+    { type:'data',    label:'Dumped, Etc.',               key:'dumped',       fmt:'qty', sub:true },
+    { type:'data',    label:'Repack Shrinkage',           key:'netAtRepack',  fmt:'qty', sub:true },
+    { type:'data',    label:'Pending to Invoice',         key:'pkgsPending',  fmt:'qty', sub:true },
+    { type:'total',   label:'Total Pkgs Received',        key:'pkgsTotal',    fmt:'qty' },
+
+    { type:'section', label:'SALES' },
+    { type:'data',    label:'Gross Sales',                key:'salesGross',   fmt:'usd' },
+    { type:'data',    label:'Avg Price (Gross)',          key:'avgPriceGross',fmt:'usd', sub:true,
+      totFn: d => { const tG = seasons.reduce((s,x) => s+(d[x]?.salesGross||0),0); const tD = seasons.reduce((s,x) => s+(d[x]?.pkgsTotal||0),0); return tD?tG/tD:0; } },
+    { type:'data',    label:'- Adjustments',              key:'adjAmt',       fmt:'usd', sub:true },
+    { type:'total',   label:'= Net Sales',                key:'netSales',     fmt:'usd' },
+    { type:'data',    label:'Avg Price (Net)',            key:'avgPriceNet',  fmt:'usd', sub:true, bold:true,
+      totFn: d => { const tN = seasons.reduce((s,x) => s+(d[x]?.netSales||0),0); const tD = seasons.reduce((s,x) => s+(d[x]?.pkgsTotal||0),0); return tD?tN/tD:0; } },
+    { type:'data',    label:'Pending Adj (Qty)',           key:'pAdjQty',      fmt:'qty', sub:true },
+    { type:'data',    label:'Pending Adj (Amount)',        key:'pAdjAmt',      fmt:'usd', sub:true },
+
+    { type:'section', label:'EXPENSES' },
+    ...concepts.map(c => ({ type:'data', label:c, key:`exp_${c}`, fmt:'usd', sub:true })),
+    { type:'total',   label:'Total Expenses',             key:'expTotal',     fmt:'usd' },
+
+    { type:'section', label:'WIRES' },
+    { type:'data',    label:'Liquidation',                key:'exp_Liquidation',  fmt:'usd', sub:true },
+    { type:'data',    label:'Pick & Pack',                key:'exp_Pick & Pack',  fmt:'usd', sub:true },
+    { type:'data',    label:'Advances',                   key:'exp_Advances',     fmt:'usd', sub:true },
+    { type:'total',   label:'Total Wires',                key:'wiresTotal',   fmt:'usd' },
+
+    { type:'data',    label:'Adjustments',               fmt:'usd',
+      valFn: s => isClosed(s) ? -(data[s]?.balance || 0) : 0 },
+
+    { type:'balance', label:'BALANCE  (Net Sales − Expenses − Wires + Adjustments)', fmt:'usd',
+      valFn: s => {
+        const bal = data[s]?.balance || 0;
+        return bal + (isClosed(s) ? -bal : 0);
+      }
+    },
+  ];
+
+  // All th sticky top so the header row stays visible during vertical scroll.
+  // Concepto th also sticky left (corner cell) at highest z-index.
+  const thBase = `position:sticky;top:0;z-index:2;background:var(--gd)`;
+
+  const head = `<tr>
+    <th style="min-width:195px;text-align:left;position:sticky;left:0;top:0;z-index:5;background:var(--gd)">Concept</th>
+    ${seasons.map(s => `
+      <th style="text-align:right;min-width:115px;${thBase}">${s}</th>
+      <th style="${PC_HDR};${thBase};background:#0b2e19">$/caja</th>
+    `).join('')}
+    <th style="text-align:right;min-width:120px;${thBase};background:#0d3321">Total</th>
+    <th style="${PC_HDR};${thBase};background:#0b2e19">$/caja</th>
+  </tr>`;
+
+  const body = ROWS.map(row => {
+    if (row.type === 'section') {
+      return `<tr>
+        <td class="sec-hdr" style="padding:8px 14px;font-weight:800;font-size:11px;
+                                   letter-spacing:.8px;white-space:nowrap;color:#fff;
+                                   position:sticky;left:0;z-index:4;background:var(--gd)">${row.label}</td>
+        <td class="sec-fill" colspan="${totalCols - 1}" style="background:var(--gd);position:sticky;z-index:3"></td>
+      </tr>`;
+    }
+
+    const fmt  = row.fmt === 'qty' ? fN : fC;
+    const vals = row.valFn ? seasons.map(s => row.valFn(s)) : seasons.map(s => get(s, row.key));
+    const tot  = row.totFn ? row.totFn(data) : vals.reduce((a, b) => a + b, 0);
+    const hasPc = showPc(row);
+
+    const isBalance = row.type === 'balance';
+    const isTotal   = row.type === 'total';
+
+    const trBg = isBalance ? (tot >= 0 ? 'var(--gd)' : '#7f1d1d') : isTotal ? 'var(--gp)' : '';
+    let trStyle = '';
+    if (isBalance) trStyle = `style="background:${trBg};color:#fff;font-size:13px"`;
+    else if (isTotal) trStyle = `style="background:${trBg};font-weight:700"`;
+
+    // Concept cell: sticky left so Concepto column stays visible on horizontal scroll
+    let tdFirst;
+    if (isBalance) tdFirst = `style="padding:10px 14px;font-weight:800;position:sticky;left:0;z-index:1;background:${trBg}"`;
+    else if (isTotal) tdFirst = `style="font-weight:700;position:sticky;left:0;z-index:1;background:var(--gp)"`;
+    else if (row.sub) tdFirst = `style="padding-left:28px;color:#475569;position:sticky;left:0;z-index:1;background:#fff"`;
+    else tdFirst = `style="font-weight:600;position:sticky;left:0;z-index:1;background:#fff"`;
+
+    const cells = vals.map((v, i) => {
+      const s   = seasons[i];
+      const p   = pkgs[s] || 0;
+      const pcBg    = isBalance ? 'rgba(0,0,0,.18)' : isTotal ? '#c8edce' : '#f8fafb';
+      const pcColor = isBalance ? 'rgba(255,255,255,.8)' : isTotal ? '#166534' : '#64748b';
+      const td = isBalance ? `style="text-align:right;padding:10px 12px;font-family:monospace;color:#fff;font-weight:800"` : `class="r"`;
+      const pcVal = hasPc && p ? fmtUSD(v / p) : dash;
+      return `<td ${td}>${isBalance ? fCw(v) : fmt(v)}</td>
+              <td style="${pcCell(pcBg, pcColor)}">${pcVal}</td>`;
+    }).join('');
+
+    const totBg    = isTotal ? '#d8f3dc' : isBalance ? trBg : '#f8fafb';
+    const totPcBg  = isTotal ? '#c8edce'  : isBalance ? 'rgba(0,0,0,.18)' : '#f0f4f8';
+    const totPcCol = isBalance ? 'rgba(255,255,255,.8)' : isTotal ? '#166534' : '#64748b';
+    const totPc    = hasPc && totalPkgs ? fmtUSD(tot / totalPkgs) : dash;
+
+    const totTd = isBalance
+      ? `style="text-align:right;padding:10px 12px;font-family:monospace;font-weight:800;background:inherit;color:#fff;font-weight:800"`
+      : `style="text-align:right;font-family:monospace;font-weight:700;padding:7px 12px;background:${totBg}"`;
+    const totPcTd = isBalance
+      ? `style="${pcCell('rgba(0,0,0,.18)', 'rgba(255,255,255,.8)')}"`
+      : `style="${pcCell(totPcBg, totPcCol)}"`;
+
+    return `<tr ${trStyle}>
+      <td ${tdFirst}>${row.label}</td>
+      ${cells}
+      <td ${totTd}>${isBalance ? fCw(tot) : fmt(tot)}</td>
+      <td ${totPcTd}>${totPc}</td>
+    </tr>`;
+  }).join('');
+
+  setBody(`<table style="width:100%;border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table>`);
+
+  // Pin section headers (PACKAGES, SALES…) just below the sticky column-header row
+  requestAnimationFrame(() => {
+    const wrap  = document.getElementById('twrap');
+    const thead = wrap?.querySelector('thead');
+    if (!thead) return;
+    const hh = thead.offsetHeight + 'px';
+    wrap.querySelectorAll('.sec-hdr, .sec-fill').forEach(td => { td.style.top = hh; });
+  });
+
+  const totNet = seasons.reduce((s, x) => s + (data[x]?.netSales   || 0), 0);
+  const totExp = seasons.reduce((s, x) => s + (data[x]?.expTotal   || 0), 0);
+  const totWir = seasons.reduce((s, x) => s + (data[x]?.wiresTotal || 0), 0);
+  const totBal = seasons.reduce((s, x) => {
+    const bal = data[x]?.balance || 0;
+    return s + bal + (isClosed(x) ? -bal : 0);
+  }, 0);
+
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Net Sales Total', fmtUSD(totNet), 'all seasons'),
+    kpiCard('Expenses Total',  fmtUSD(totExp), 'excl. wires'),
+    kpiCard('Wires Total',     fmtUSD(totWir), 'Liq · P&P · Advances'),
+    kpiCard('Balance Total',   fmtUSD(Math.abs(totBal)), totBal >= 0 ? 'positive' : 'deficit'),
+  ].join('');
+
+  setSL(`${seasons.length} seasons · ${concepts.length} concepts`);
+  setSR(`Total Balance: ${fmtUSD(totBal)}`);
+}
+
+// ── Sales by Season (seasons as rows, metrics as columns) ────────────────────
+function renderSalesBySeason(d) {
+  if (!d || d.error) {
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
+    setSL('Error'); setSR(''); return;
+  }
+
+  salesBySeasonData = d;
+  const { seasons, data } = d;
+
+  const pct = (a, b) => b ? `<span style="font-size:10px;color:#64748b">${(a/b*100).toFixed(1)}%</span>` : `<span class="rno">—</span>`;
+
+  const totPkgs  = seasons.reduce((a, s) => a + (data[s]?.pkgsTotal  || 0), 0);
+  const totGross = seasons.reduce((a, s) => a + (data[s]?.salesGross || 0), 0);
+  const totAdj   = seasons.reduce((a, s) => a + (data[s]?.adjAmt    || 0), 0);
+  const totNet   = seasons.reduce((a, s) => a + (data[s]?.netSales  || 0), 0);
+
+  const thS  = `position:sticky;top:0;z-index:2;background:var(--gd)`;
+  const thPC = `text-align:right;font-size:10px;color:#a7f3d0;min-width:80px;white-space:nowrap;${thS};background:#0b2e19`;
+
+  const head = `<tr>
+    <th style="text-align:left;min-width:115px;position:sticky;left:0;top:0;z-index:5;background:var(--gd)">Season</th>
+    <th style="text-align:right;min-width:95px;${thS}">Pkgs</th>
+    <th style="text-align:right;min-width:130px;${thS}">Gross Sales</th>
+    <th style="${thPC}">$/caja</th>
+    <th style="text-align:right;min-width:130px;${thS}">Adjustments</th>
+    <th style="text-align:right;min-width:75px;${thS}">Adj %</th>
+    <th style="text-align:right;min-width:130px;${thS}">Net Sales</th>
+    <th style="${thPC}">$/caja Net</th>
+  </tr>`;
+
+  const pcCell = `text-align:right;font-size:10px;font-family:monospace;color:#64748b;background:#f8fafb`;
+
+  const rows = seasons.map(s => {
+    const sd    = data[s] || {};
+    const pkgs  = sd.pkgsTotal  || 0;
+    const gross = sd.salesGross || 0;
+    const adj   = sd.adjAmt    || 0;
+    const net   = sd.netSales  || 0;
+    return `<tr>
+      <td style="font-weight:600;position:sticky;left:0;z-index:1;background:#fff">${s}</td>
+      <td class="r">${fN(pkgs)}</td>
+      <td class="r">${fC(gross)}</td>
+      <td style="${pcCell}">${pkgs ? fmtUSD(gross/pkgs) : '<span class="rno">—</span>'}</td>
+      <td class="r">${fC(adj)}</td>
+      <td style="text-align:right;padding:7px 12px">${pct(adj, gross)}</td>
+      <td class="r">${fC(net)}</td>
+      <td style="${pcCell}">${pkgs ? fmtUSD(net/pkgs) : '<span class="rno">—</span>'}</td>
+    </tr>`;
+  }).join('');
+
+  const totPcGross = `text-align:right;font-size:10px;font-family:monospace;color:#166534;background:#c8edce`;
+  const totRow = `<tr style="background:var(--gp);font-weight:700">
+    <td style="font-weight:800;position:sticky;left:0;z-index:1;background:var(--gp)">TOTAL</td>
+    <td class="r">${fN(totPkgs)}</td>
+    <td class="r">${fC(totGross)}</td>
+    <td style="${totPcGross}">${totPkgs ? fmtUSD(totGross/totPkgs) : '—'}</td>
+    <td class="r">${fC(totAdj)}</td>
+    <td style="text-align:right;padding:7px 12px;background:var(--gp)">${pct(totAdj, totGross)}</td>
+    <td class="r">${fC(totNet)}</td>
+    <td style="${totPcGross}">${totPkgs ? fmtUSD(totNet/totPkgs) : '—'}</td>
+  </tr>`;
+
+  setBody(`<table style="width:100%;border-collapse:collapse">
+    <thead>${head}</thead>
+    <tbody>${rows}${totRow}</tbody>
+  </table>`);
+
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Total Pkgs',   fmtNum(totPkgs),  'all seasons'),
+    kpiCard('Gross Sales',  fmtUSD(totGross), 'gross sales'),
+    kpiCard('Adjustments',  fmtUSD(totAdj),   `${totGross ? (totAdj/totGross*100).toFixed(1)+'%' : '—'} of gross sales`),
+    kpiCard('Net Sales',    fmtUSD(totNet),   'net sales'),
+    kpiCard('$/caja (Net)', totPkgs ? fmtUSD(totNet/totPkgs) : '—', 'avg net price'),
+  ].join('');
+
+  setSL(`${seasons.length} seasons`);
+  setSR(`Net Sales: ${fmtUSD(totNet)}`);
+}
+
+// ── GWR Expenses x Temporada (pivot) ─────────────────────────────────────────
+function pivotSort(col) {
+  pivotSortDir = (pivotSortCol === col) ? pivotSortDir * -1 : -1;
+  pivotSortCol = col;
+  if (pivotData) renderExpensesBySeason(pivotData);
+}
+
+function renderExpensesBySeason(d) {
+  if (!d || d.error) {
+    setBody(`<div class="err"><strong>Error:</strong> ${d?.error || 'No data'}</div>`);
+    setSL('Error'); setSR(''); return;
+  }
+
+  const { seasons, rows, totals, grandTotal, wires, wireTotals, wireGrandTotal } = d;
+  const q = (document.getElementById('search')?.value || '').toLowerCase();
+
+  const sortRows = arr => {
+    const visible = q ? arr.filter(r => r.concept.toLowerCase().includes(q)) : arr;
+    return [...visible].sort((a, b) => {
+      const va = pivotSortCol === 'total' ? a.total : (a.amounts[pivotSortCol] || 0);
+      const vb = pivotSortCol === 'total' ? b.total : (b.amounts[pivotSortCol] || 0);
+      return (va - vb) * pivotSortDir;
+    });
+  };
+
+  const si  = col => `<span class="si">${pivotSortCol===col?(pivotSortDir===1?'↑':'↓'):'↕'}</span>`;
+  const pkgs = pkgsBySeason || {};
+  const totalPkgs = seasons.reduce((s, x) => s + (pkgs[x] || 0), 0);
+  const PC = `text-align:right;font-size:10px;color:#a7f3d0;min-width:65px;letter-spacing:.2px`;
+  const pcVal = (amt, p) => p ? fmtUSD(amt / p) : '—';
+
+  const STK = `position:sticky;top:0;z-index:2`;
+  const buildHead = () => `<tr>
+    <th style="${STK}">#</th>
+    <th style="min-width:160px;position:sticky;top:0;left:0;z-index:5">Concept</th>
+    ${seasons.map(s =>
+      `<th class="${pivotSortCol===s?'sorted':''}" onclick="pivotSort('${s}')"
+           style="text-align:right;min-width:105px;${STK}">${s}${si(s)}</th>
+       <th style="${PC};${STK}">$/caja</th>`
+    ).join('')}
+    <th class="${pivotSortCol==='total'?'sorted':''}" onclick="pivotSort('total')"
+        style="text-align:right;min-width:115px;background:#0d3321;${STK}">Total${si('total')}</th>
+    <th style="${PC};background:#0d3321;${STK}">$/caja</th>
+  </tr>`;
+
+  const buildBody = arr => arr.map((r, i) => `
+    <tr>
+      <td class="row-num r">${i+1}</td>
+      <td style="font-weight:500;white-space:nowrap;position:sticky;left:0;z-index:1;background:#fff">${r.concept}</td>
+      ${seasons.map(s => {
+        const amt = r.amounts[s] || 0;
+        const p   = pkgs[s] || 0;
+        return `${amt ? `<td class="r">${fmtUSD(amt)}</td>` : `<td class="rno" style="text-align:right">—</td>`}
+                <td style="text-align:right;font-size:11px;color:#64748b;font-family:monospace;background:#f8fafb">${amt&&p ? fmtUSD(amt/p) : '<span class=rno>—</span>'}</td>`;
+      }).join('')}
+      <td class="rc" style="background:#f0fdf4">${fmtUSD(r.total)}</td>
+      <td style="text-align:right;font-size:11px;font-family:monospace;font-weight:600;color:#2d6a4f;background:#e8f5e9">${totalPkgs ? fmtUSD(r.total/totalPkgs) : '—'}</td>
+    </tr>`).join('');
+
+  const buildTotRow = (colTotals, gTotal) => `
+    <tr style="background:var(--gd);color:#fff">
+      <td colspan="2" style="font-weight:800;padding:10px 12px;position:sticky;left:0;background:var(--gd)">TOTAL</td>
+      ${seasons.map(s => {
+        const amt = colTotals[s] || 0;
+        const p   = pkgs[s] || 0;
+        return `<td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${fmtUSD(amt)}</td>
+                <td style="text-align:right;padding:8px 6px;font-family:monospace;font-size:11px;opacity:.85">${p ? fmtUSD(amt/p) : '—'}</td>`;
+      }).join('')}
+      <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:800">${fmtUSD(gTotal)}</td>
+      <td style="text-align:right;padding:8px 6px;font-family:monospace;font-size:11px;opacity:.85">${totalPkgs ? fmtUSD(gTotal/totalPkgs) : '—'}</td>
+    </tr>`;
+
+  const sectionTitle = (label, color) =>
+    `<div style="padding:10px 16px 6px;font-size:13px;font-weight:800;color:${color};
+                 border-bottom:2px solid ${color};margin-bottom:0">${label}</div>`;
+
+  const sortedExp   = sortRows(rows);
+  const sortedWires = sortRows(wires);
+  const head        = buildHead();
+
+  const expTable = `
+    ${sectionTitle('Expenses', 'var(--gd)')}
+    <table>
+      <thead>${head}</thead>
+      <tbody>${buildBody(sortedExp)}${buildTotRow(totals, grandTotal)}</tbody>
+    </table>`;
+
+  const wireTable = `
+    <div style="margin-top:24px"></div>
+    ${sectionTitle('Wires', '#1e3a8a')}
+    <table>
+      <thead>
+        <tr>
+          <th style="background:#1e3a8a;${STK}">#</th>
+          <th style="background:#1e3a8a;min-width:160px;position:sticky;top:0;left:0;z-index:5">Concept</th>
+          ${seasons.map(s =>
+            `<th class="${pivotSortCol===s?'sorted':''}" onclick="pivotSort('${s}')"
+                 style="background:#1e3a8a;text-align:right;min-width:105px;${STK}">${s}${si(s)}</th>
+             <th style="background:#162a6b;${PC};${STK}">$/caja</th>`
+          ).join('')}
+          <th class="${pivotSortCol==='total'?'sorted':''}" onclick="pivotSort('total')"
+              style="background:#172554;text-align:right;min-width:115px;${STK}">Total${si('total')}</th>
+          <th style="background:#172554;${PC};${STK}">$/caja</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${buildBody(sortedWires)}
+        <tr style="background:#1e3a8a;color:#fff">
+          <td colspan="2" style="font-weight:800;padding:10px 12px;position:sticky;left:0;background:#1e3a8a">TOTAL WIRES</td>
+          ${seasons.map(s => {
+            const amt = wireTotals[s] || 0;
+            const p   = pkgs[s] || 0;
+            return `<td class="r" style="padding:10px 12px;font-family:monospace;font-weight:700">${fmtUSD(amt)}</td>
+                    <td style="text-align:right;padding:8px 6px;font-family:monospace;font-size:11px;opacity:.85">${p ? fmtUSD(amt/p) : '—'}</td>`;
+          }).join('')}
+          <td class="r" style="padding:10px 12px;font-family:monospace;font-weight:800">${fmtUSD(wireGrandTotal)}</td>
+          <td style="text-align:right;padding:8px 6px;font-family:monospace;font-size:11px;opacity:.85">${totalPkgs ? fmtUSD(wireGrandTotal/totalPkgs) : '—'}</td>
+        </tr>
+      </tbody>
+    </table>`;
+
+  setBody(expTable + wireTable);
+
+  const topSeason = seasons.reduce((b, s) => (totals[s]||0) > (totals[b]||0) ? s : b, seasons[0]);
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Expenses Total',  fmtUSD(grandTotal),      'excl. wires'),
+    kpiCard('Wires Total',     fmtUSD(wireGrandTotal),  'Liquidation · Pick&Pack · Advances'),
+    kpiCard('Top Season',      topSeason || '—',        fmtUSD(totals[topSeason] || 0)),
+    kpiCard('Seasons',         seasons.length,          'with expenses'),
+  ].join('');
+
+  setSL(`${sortedExp.length} expenses · ${sortedWires.length} wires · ${seasons.length} seasons`);
+  setSR(`Expenses: ${fmtUSD(grandTotal)} | Wires: ${fmtUSD(wireGrandTotal)}`);
+}
+
+// ── Expenses Table (separada en Expenses + Wires) ─────────────────────────────
+function renderExpensesTable(data) {
+  if (!data.length) {
+    setBody('<div class="empty">No records found for the selected filters</div>');
+    setSL('0 records'); setSR(''); return;
+  }
+
+  const m          = MODS[mIdx];
+  const cols       = Object.keys(data[0]);
+  const WIRES      = new Set(['Liquidation', 'Pick & Pack', 'Advances']);
+  const conceptCol = ['Concept_Name','Concept','Description'].find(c => cols.includes(c));
+  const isNum      = c => { const s = data.find(r => r[c] != null); return s && typeof s[c] === 'number'; };
+  const isAmt      = c => m.amt.includes(c);
+  const isId       = c => /[ _](No|ID|Code|Num)\.?$/i.test(c);
+  const pkgs       = pkgsBySeason || {};
+
+  const groupPkgs  = arr => {
+    const seasons = [...new Set(arr.map(r => r['Season_Name']).filter(Boolean))];
+    return seasons.reduce((s, x) => s + (pkgs[x] || 0), 0);
+  };
+  const perCaja = (amt, p) => (amt && p) ? fmtUSD(amt / p) : `<span class="rno">—</span>`;
+
+  const expenses = conceptCol ? data.filter(r => !WIRES.has(r[conceptCol])) : data;
+  const wires    = conceptCol ? data.filter(r =>  WIRES.has(r[conceptCol])) : [];
+
+  const sumGroup = arr => {
+    const s = {};
+    cols.forEach(c => { if (isNum(c)) s[c] = arr.reduce((t, r) => t + (+r[c]||0), 0); });
+    return s;
+  };
+  const expSums  = sumGroup(expenses);
+  const wirSums  = sumGroup(wires);
+  const allSums  = sumGroup(data);
+  const allPkgs  = groupPkgs(data);
+  const expPkgs  = groupPkgs(expenses);
+  const wirPkgs  = groupPkgs(wires);
+
+  const PC_STYLE = `text-align:right;font-family:monospace;font-size:11px;color:#2d6a4f;background:#f0fdf4;white-space:nowrap`;
+  const PC_HEAD  = `text-align:right;font-size:10px;color:#a7f3d0;letter-spacing:.3px;white-space:nowrap`;
+
+  const fmtVal = (c, v) => {
+    if (v == null || v === '') return `<td class="rno">—</td>`;
+    if (isAmt(c) && typeof v === 'number') return `<td class="${v<0?'rc rn':'rc'}">${fmtUSD(v)}</td>`;
+    if (isNum(c)) return `<td class="r">${fmtNum(v)}</td>`;
+    return `<td>${v}</td>`;
+  };
+
+  const makeHeadCells = bg => cols.map(c => {
+    const sorted = sCol === c;
+    const extra  = isAmt(c)
+      ? `<th style="background:${bg};${PC_HEAD}">$/caja</th>` : '';
+    return `<th style="background:${bg}" class="${sorted?'sorted':''}" onclick="sortBy('${c}')">
+      ${c}<span class="si">${sorted?(sDir===1?'↑':'↓'):'↕'}</span></th>${extra}`;
+  }).join('');
+
+  const makeTotTh = (sums, bg, groupPk) => {
+    let done = false;
+    return cols.map(c => {
+      if (!isNum(c)) {
+        if (!done) { done=true; return `<th style="background:${bg};color:#a7f3d0;font-weight:800;text-align:left;font-size:11px;letter-spacing:.4px">TOTAL</th>`; }
+        return `<th style="background:${bg}"></th>`;
+      }
+      if (isId(c)) return `<th style="background:${bg};text-align:right;color:#475569">—</th>`;
+      const v   = sums[c]||0;
+      const FG  = `color:#d8f3dc;font-weight:700;font-family:monospace;font-size:12px;text-align:right`;
+      const cell = `<th style="background:${bg};${FG}">${isAmt(c)?fmtUSD(v):fmtNum(v)}</th>`;
+      const pcCell = isAmt(c)
+        ? `<th style="background:${bg};${PC_HEAD};font-weight:700">${groupPk?fmtUSD(v/groupPk):'—'}</th>` : '';
+      return cell + pcCell;
+    }).join('');
+  };
+
+  const makeSubtot = (sums, bg, label, groupPk) => {
+    let done = false;
+    const cells = [
+      `<td style="background:${bg};color:#a7f3d0;font-weight:800;font-size:11px;text-align:right">Σ</td>`,
+      ...cols.map(c => {
+        if (!isNum(c)) {
+          if (!done) { done=true; return `<td style="background:${bg};color:#fff;font-weight:800;font-size:11px;letter-spacing:.3px">${label}</td>`; }
+          return `<td style="background:${bg}"></td>`;
+        }
+        if (isId(c)) return `<td style="background:${bg}"></td>`;
+        const v    = sums[c]||0;
+        const cell = `<td style="background:${bg};color:#fff;font-weight:700;font-family:monospace;font-size:12px;text-align:right">${isAmt(c)?fmtUSD(v):fmtNum(v)}</td>`;
+        const pcCell = isAmt(c)
+          ? `<td style="background:${bg};color:#a7f3d0;font-family:monospace;font-size:11px;text-align:right">${groupPk?fmtUSD(v/groupPk):'—'}</td>` : '';
+        return cell + pcCell;
+      })
+    ];
+    return `<tr>${cells.join('')}</tr>`;
+  };
+
+  const sectionHdr = (label, bg) => {
+    const span = cols.length + 1 + cols.filter(c => isAmt(c)).length;
+    return `<tr style="background:${bg};color:#fff">
+       <td colspan="${span}" style="padding:8px 14px;font-weight:800;font-size:11px;letter-spacing:.8px">${label}</td>
+     </tr>`;
+  };
+
+  const makeRows = (arr, offset) => arr.map((r, i) => {
+    const rowPkgs = pkgs[r['Season_Name']] || 0;
+    return `<tr>
+      <td class="row-num r">${offset+i+1}</td>
+      ${cols.map(c => {
+        const cell = fmtVal(c, r[c]);
+        const pcCell = isAmt(c) && typeof r[c] === 'number'
+          ? `<td style="${PC_STYLE}">${perCaja(r[c], rowPkgs)}</td>` : '';
+        return cell + pcCell;
+      }).join('')}
+    </tr>`;
+  }).join('');
+
+  const BG_EXP = '#1b4332';
+  const BG_WIR = '#1e3a8a';
+
+  setBody(`<table>
+    <thead>
+      <tr><th style="background:${BG_EXP};color:#a7f3d0;font-size:11px">Σ</th>${makeTotTh(allSums, BG_EXP, allPkgs)}</tr>
+      <tr><th style="background:${BG_EXP}">#</th>${makeHeadCells(BG_EXP)}</tr>
+    </thead>
+    <tbody>
+      ${sectionHdr('▸ EXPENSES', BG_EXP)}
+      ${makeRows(expenses, 0)}
+      ${makeSubtot(expSums, BG_EXP, 'TOTAL EXPENSES', expPkgs)}
+      ${wires.length ? sectionHdr('▸ WIRES', BG_WIR) : ''}
+      ${wires.length ? makeRows(wires, expenses.length) : ''}
+      ${wires.length ? makeSubtot(wirSums, BG_WIR, 'TOTAL WIRES', wirPkgs) : ''}
+    </tbody>
+  </table>`);
+
+  const expAmt = expSums['Amount'] || 0;
+  const wirAmt = wirSums['Amount'] || 0;
+
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Expenses',    fmtUSD(expAmt),            `${expenses.length} registros`),
+    kpiCard('Wires',       fmtUSD(wirAmt),            `${wires.length} registros`),
+    kpiCard('Total',       fmtUSD(expAmt + wirAmt),   'expenses + wires'),
+  ].join('');
+
+  setSL(`${expenses.length} expenses · ${wires.length} wires`);
+  setSR(`Expenses: ${fmtUSD(expAmt)} | Wires: ${fmtUSD(wirAmt)}`);
+}
+
+// ── Reporte de Ajustes ────────────────────────────────────────────────────────
+function renderAdjReport(data) {
+  if (!data.length) {
+    setBody('<div class="empty">No adjustments found in the selected range</div>');
+    setSL('0 adjustments'); setSR(''); return;
+  }
+
+  const m      = MODS[mIdx];
+  const amtSet = new Set(m.amt);
+  const isAmt  = c => amtSet.has(c);
+  const isNum  = c => data.find(r => r[c] != null) && typeof data.find(r => r[c] != null)[c] === 'number';
+
+  const COL_ENDY = 'Año_Fin_Temp';
+  const COL_COMP = 'Complaint_Date';
+  const COL_POST = 'Año_Post';
+  const COL_DIAS = 'Dias';
+  const HIDDEN   = new Set(['Fuera_Temporada', 'Año_Post_raw', 'Trouble_Status']);
+
+  // Orden fijo de columnas
+  const COL_ORDER = [
+    'Grower_Code','Grower_Name','Season_Name','Contract_No.',
+    'Commodity_Name','Variety_Name','Pack_Style_Code','Size_Name','Label_Name',
+    'Trouble_No.','Trouble_Reason','Order_No.','Qty','Amount',
+    COL_ENDY, COL_COMP, COL_POST, COL_DIAS
+  ];
+  const rawCols = Object.keys(data[0]).filter(c => !HIDDEN.has(c));
+  const cols = [
+    ...COL_ORDER.filter(c => rawCols.includes(c)),
+    ...rawCols.filter(c => !COL_ORDER.includes(c))
+  ];
+
+  const thStyle = c => {
+    if (c === COL_ENDY || c === COL_COMP || c === COL_POST) return 'style="background:#155e39"';
+    if (c === COL_DIAS)   return 'style="background:#7f1d1d"';
+    return '';
+  };
+
+  const thLabel = c => {
+    const si = `<span class="si">${sCol===c?(sDir===1?'↑':'↓'):'↕'}</span>`;
+    if (c === COL_ENDY)   return `Ship Date${si}`;
+    if (c === COL_COMP)   return `Open Date${si}`;
+    if (c === COL_POST)   return `Adj. Date${si}`;
+    if (c === COL_DIAS)   return `Days${si}`;
+    return `${c}${si}`;
+  };
+
+  const head = ['#', ...cols].map(c => {
+    if (c === '#') return `<th>#</th>`;
+    return `<th class="${sCol===c?'sorted':''}" onclick="sortBy('${c}')" ${thStyle(c)}>${thLabel(c)}</th>`;
+  }).join('');
+
+  const fmtCell = (c, v) => {
+    if (v == null || v === '') return `<td class="rno">—</td>`;
+    if (c === COL_DIAS) {
+      const alert = typeof v === 'number' && v > 15;
+      const color = alert ? '#ef4444' : '#16a34a';
+      const icon  = alert ? '⚠️ ' : '';
+      return `<td class="r" style="font-weight:700;color:${color}">${icon}${v}</td>`;
+    }
+    if (c === COL_ENDY || c === COL_COMP || c === COL_POST)
+      return `<td class="r" style="color:var(--gd);font-weight:700">${v}</td>`;
+    if (isAmt(c) && typeof v === 'number')
+      return `<td class="${v < 0 ? 'rc rn' : 'rc'}">${fmtUSD(v)}</td>`;
+    if (isNum(c)) return `<td class="r">${fmtNum(v)}</td>`;
+    return `<td>${v}</td>`;
+  };
+
+  const alertRows = data.filter(r => typeof r[COL_DIAS] === 'number' && r[COL_DIAS] > 15);
+
+  const body = data.map((r, idx) => {
+    const alert = typeof r[COL_DIAS] === 'number' && r[COL_DIAS] > 15;
+    const rowStyle = alert ? ' style="background:#fff1f2"' : '';
+    return `<tr${rowStyle}><td class="row-num r">${idx+1}</td>${cols.map(c => fmtCell(c, r[c])).join('')}</tr>`;
+  }).join('');
+
+  const infoBar = `
+    <div style="padding:9px 16px;font-size:12px;display:flex;gap:20px;flex-wrap:wrap;align-items:center;
+                background:#fff7ed;border-bottom:1px solid #fed7aa;color:#92400e">
+      <span><strong>Total adjustments:</strong> ${data.length}</span>
+      <span style="color:#ef4444;font-weight:700">⚠️ Over 15 days: ${alertRows.length}</span>
+      <span style="color:#64748b;font-size:11px">Days = between Ship Date and Adj. Date</span>
+    </div>`;
+
+  setBody(infoBar + `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`);
+
+  const totalAmt = data.reduce((s, r) => {
+    for (const f of m.amt) if (typeof r[f] === 'number') return s + r[f];
+    return s;
+  }, 0);
+  const alertAmt = alertRows.reduce((s, r) => {
+    for (const f of m.amt) if (typeof r[f] === 'number') return s + r[f];
+    return s;
+  }, 0);
+
+  document.getElementById('kpis').innerHTML = [
+    kpiCard('Total Adjustments', fmtNum(data.length),      'in period'),
+    kpiCard('Total Amount',      fmtUSD(totalAmt),         'sum of adjustments'),
+    kpiCard('Over 15 Days',      fmtNum(alertRows.length), 'between ship and adj. date'),
+    kpiCard('Amt +15 Days',      fmtUSD(alertAmt),         'amount of late adjustments'),
+  ].join('');
+
+  setSL(`${data.length.toLocaleString()} adjustments`);
+  setSR(`+15 days: ${alertRows.length} (${fmtUSD(alertAmt)})`);
+}
+
+// ── PDF Export (all server-side) ──────────────────────────────────────────────
+function exportPDF() {
+  const id  = MODS[mIdx].id;
+  const p   = new URLSearchParams(buildQS());
+  if (sCol !== null) { p.set('sortCol', sCol); p.set('sortDir', String(sDir)); }
+  const q   = p.toString() ? '?' + p.toString() : '';
+
+  if (id === 'adj-report') {
+    if (!view.length) return;
+    fetch('/report/adj-report', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(view),
+    })
+    .then(r => r.status === 204 ? null : r.blob())
+    .then(blob => {
+      if (!blob) return;
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `H2E_adj-report_${new Date().toISOString().slice(0,10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    })
+    .catch(e => alert('PDF error: ' + e.message));
+    return;
+  }
+
+  if      (id === 'sales-season')    window.open('/report/sales-by-season', '_blank');
+  else if (id === 'stmt-by-season')  window.open('/report/stmt-by-season', '_blank');
+  else if (id === 'expenses-season') window.open('/report/expenses-season' + q, '_blank');
+  else if (id === 'statement')       window.open('/report/statement' + q, '_blank');
+  else                               window.open('/report/' + id + q, '_blank');
+}
+
+// ── Season Pills ──────────────────────────────────────────────────────────────
+const pillSeasonKey = s => {
+  const parts = String(s).trim().split(/[-\/]/);
+  const endY  = parseInt(parts[parts.length - 1]);
+  const full  = endY < 100 ? 2000 + endY : endY;
+  return full * 2 + (parts.length > 1 ? 0 : 1);
+};
+
+function buildSeasonPills(data) {
+  const box = document.getElementById('season-pills');
+  if (!data.length || !('Season_Name' in data[0]) || SALES_IDS.has(MODS[mIdx].id)) { box.innerHTML = ''; return; }
+
+  const seasons = [...new Set(data.map(r => r['Season_Name']).filter(Boolean))]
+    .sort((a, b) => pillSeasonKey(a) - pillSeasonKey(b));
+
+  if (seasons.length < 2) { box.innerHTML = ''; return; }
+
+  const allActive = !seasonPillFilter;
+  box.innerHTML =
+    `<span style="font-size:11px;font-weight:700;color:var(--muted);
+                  text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">
+       📅 Season:
+     </span>` +
+    `<button class="s-pill s-pill-all${allActive ? ' active' : ''}" onclick="setSeasonPill('')">
+       All (${seasons.length})
+     </button>` +
+    seasons.map(s =>
+      `<button class="s-pill${seasonPillFilter === s ? ' active' : ''}" onclick="setSeasonPill('${s}')">
+         ${s}
+       </button>`
+    ).join('');
+}
+
+function setSeasonPill(s) {
+  seasonPillFilter = s;
+  toggleDateRange(!s);
+  applyRender();
+  buildSeasonPills(raw);
+}
+
+function toggleDateRange(show) {
+  ['fFrom','fTo','fAsOf'].forEach(id => {
+    const el = document.getElementById(id)?.closest('.fg');
+    if (el) el.style.display = show ? '' : 'none';
+  });
+}
+
+async function loadFiltersSeasons() {
+  const sel = document.getElementById('fSeasonJump');
+  if (!sel) return;
+  try {
+    const seasons = await fetch('/api/seasons').then(r => r.json());
+    if (!seasons.length) return;
+    sel.innerHTML =
+      `<option value="">— Select season —</option>` +
+      seasons.map(s => `<option value="${s}">${s}</option>`).join('');
+  } catch(e) {}
+}
+
+function jumpToSeason(season) {
+  seasonPillFilter = season;
+  toggleDateRange(!season);
+  if (!raw.length) {
+    const fFrom = document.getElementById('fFrom');
+    const fTo   = document.getElementById('fTo');
+    if (fFrom) fFrom.value = '2015-01-01';
+    if (fTo)   fTo.value   = toIso(today);
+    loadData();
+  } else {
+    applyRender();
+    buildSeasonPills(raw);
+  }
+}
+
+// ── Column Filters ────────────────────────────────────────────────────────────
+const SALES_FILTER_COLS = [
+  { col: 'Season_Name',    label: 'Season'    },
+  { col: 'Commodity_Name', label: 'Commodity' },
+  { col: 'Variety_Name',   label: 'Variety'   },
+  { col: 'Pack_Style_Code',label: 'Pack'      },
+  { col: 'Size_Name',      label: 'Size'      },
+  { col: 'Label_Name',     label: 'Label'     },
+];
+const SALES_IDS = new Set(['sales-ship', 'sales-post']);
+
+function buildColumnFilters(data) {
+  const box = document.getElementById('col-filters');
+  if (!data.length) { box.innerHTML = ''; return; }
+
+  const isSales = SALES_IDS.has(MODS[mIdx].id);
+
+  let filterable; // [{ col, label }]
+
+  if (isSales) {
+    const allCols = new Set(Object.keys(data[0]));
+    filterable = SALES_FILTER_COLS
+      .filter(({ col }) => allCols.has(col))
+      .filter(({ col }) => {
+        const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+        return vals.length >= 2;
+      });
+  } else {
+    const PRIORITY = [
+      'Contract_No','Contract_no.','Grower_Code','Grower Code',
+      'Label_Code','Commodity','Item','Item_Name','Product','Variety','Grade',
+      'Shipper','Origin','State'
+    ];
+    const allCols = Object.keys(data[0]);
+    const seen    = new Set();
+    const cols    = [];
+    for (const col of [...PRIORITY, ...allCols]) {
+      if (seen.has(col)) continue;
+      seen.add(col);
+      if (!allCols.includes(col)) continue;
+      if (col === 'Season_Name') continue;
+      if (col === 'Año_Post' || col === 'Año_Fin_Temp') continue;
+      const sample = data.find(r => r[col] != null && r[col] !== '');
+      if (!sample || typeof sample[col] === 'number') continue;
+      const vals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+      if (vals.length >= 2 && vals.length <= 120) cols.push(col);
+    }
+    filterable = cols.map(col => ({ col, label: col.replace(/_/g, ' ') }));
+  }
+
+  if (!filterable.length) { box.innerHTML = ''; return; }
+
+  const selStyle = `padding:7px 10px;border:1px solid var(--border);border-radius:7px;
+                    font-size:13px;background:var(--bg);color:var(--text);outline:none;cursor:pointer;min-width:110px`;
+
+  const hasActive = Object.values(columnFilters).some(Boolean);
+
+  box.innerHTML =
+    `<span style="font-size:11px;font-weight:700;color:#2d6a4f;text-transform:uppercase;
+                  letter-spacing:.5px;align-self:flex-end;padding-bottom:8px;white-space:nowrap">
+      ${isSales ? '🔍 Filtros' : '⚙ Column Filters'}</span>` +
+    filterable.map(({ col, label }) => {
+      const rawVals = [...new Set(data.map(r => r[col]).filter(v => v != null && v !== ''))];
+      const parseDD = s => { const [d,m,y] = s.split('/').map(Number); return new Date(y, m-1, d); };
+      const vals = col === 'Complaint_Date'
+        ? rawVals.sort((a, b) => parseDD(a) - parseDD(b))
+        : rawVals.sort();
+      const cur  = columnFilters[col] || '';
+      return `<div class="fg">
+        <label>${label}</label>
+        <select onchange="setColFilter('${col}', this.value)" style="${selStyle}">
+          <option value="">All</option>
+          ${vals.map(v => `<option value="${v}"${v === cur ? ' selected' : ''}>${v}</option>`).join('')}
+        </select>
+      </div>`;
+    }).join('') +
+    `<button class="btn btn-outline btn-sm" onclick="clearColFilters()"
+             style="align-self:flex-end;margin-left:auto;${hasActive ? 'border-color:#ef4444;color:#ef4444' : ''}">
+       ✕ Clear
+     </button>`;
+}
+
+function setColFilter(col, val) {
+  columnFilters[col] = val;
+  applyRender();
+  buildColumnFilters(raw);
+}
+
+function clearColFilters() {
+  columnFilters = {};
+  buildColumnFilters(raw);
+  applyRender();
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+(function init() {
+  const nav = document.getElementById('tabs');
+  nav.innerHTML = MODS.map((m,i) =>
+    `<button class="tab" onclick="switchMod(${i})">${m.emoji} ${m.label}</button>`
+  ).join('');
+
+  const stmtIdx = MODS.findIndex(m => m.id === 'statement');
+  switchMod(stmtIdx >= 0 ? stmtIdx : 0);
+  // buildFilters() → loadSeasons() selects last season with packages and calls loadData()
+})();
