@@ -470,9 +470,10 @@ body{{padding:10px 14px;background:#fff}}
 def main():
     rows    = read_sheet()
     html    = build_html(rows)
-    dia_num = cv(g(rows, 1, 9)) or '0'
-    today   = datetime.now().strftime('%d-%m-%y')
-    outfile = os.path.join(DIARIOS, f"Reporte Saladette Dia {dia_num} {today}.pdf")
+    dia_num    = cv(g(rows, 1, 9)) or '0'
+    fecha_emp  = g(rows, 3, 6)
+    fecha_str  = fecha_emp.strftime('%d-%m-%y') if isinstance(fecha_emp, datetime) else datetime.now().strftime('%d-%m-%y')
+    outfile = os.path.join(DIARIOS, f"Reporte Saladette Dia {dia_num} {fecha_str}.pdf")
     os.makedirs(DIARIOS, exist_ok=True)
 
     try:
