@@ -106,7 +106,10 @@ async function loadData() {
   document.getElementById('ts').textContent = 'Cargando…';
   try {
     const res  = await fetch('/api/nacional');
-    const data = await res.json();
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error('El servidor devolvió HTML en lugar de JSON — reinicia node server.js'); }
     if (!res.ok) throw new Error(data.error || res.statusText);
     allData       = data;
     activeProduct = data.products[0] || '';
