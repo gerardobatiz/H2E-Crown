@@ -37,8 +37,13 @@ ct    = r.headers.get("Content-Type", "")
 es_ok = any(x in ct for x in ("spreadsheet", "octet-stream", "zip", "excel")) or r.content[:2] == b"PK"
 
 if r.status_code == 200 and es_ok:
-    with open(DESTINO, "wb") as f:
-        f.write(r.content)
+    try:
+        with open(DESTINO, "wb") as f:
+            f.write(r.content)
+    except PermissionError:
+        log("ERROR: El archivo esta abierto en Excel o bloqueado por OneDrive.")
+        log("       Cierra el archivo y vuelve a ejecutar.")
+        sys.exit(1)
     kb = len(r.content) // 1024
     log(f"OK {kb} KB guardados en {os.path.basename(DESTINO)}")
 else:
