@@ -2,7 +2,7 @@ import os, sys, subprocess, shutil, tempfile
 from datetime import datetime
 
 BASE    = os.path.dirname(os.path.abspath(__file__))
-XLSM    = os.path.join(BASE, "PNG Reportes", "Empaque_Hoy.xlsx")
+XLSM    = r"C:\Users\OFFICE DEPOT\OneDrive\Personal GBE\H2E\BCS\Empaque\Formato de Empaque 2E 25-26 (Saladette).xlsm"
 DIARIOS = os.path.join(BASE, "Diarios")
 
 def pip_install(pkg):
@@ -18,7 +18,7 @@ except ImportError:
 def read_sheet():
     if not os.path.exists(XLSM):
         print(f"ERROR: No se encontro el archivo:\n  {XLSM}")
-        print("Guarda la hoja 'p PDF' como 'Empaque_Hoy.xlsx' en la carpeta 'PNG Reportes' y vuelve a ejecutar.")
+        print("Asegurate de que el archivo principal este en la misma carpeta que este script.")
         sys.exit(1)
     # Copia a temp para evitar PermissionError si el archivo está abierto en Excel / sincronizando OneDrive
     tmp_path = None
@@ -576,25 +576,29 @@ def make_test_rows():
 
 if __name__ == '__main__':
     import sys
-    if '--test' in sys.argv:
-        rows   = make_test_rows()
-        html   = build_html(rows)
-        today  = datetime.now().strftime('%d-%m-%y')
-        outfile = os.path.join(DIARIOS, f"Reporte Saladette Dia 9 {today} (Prueba).pdf")
-        os.makedirs(DIARIOS, exist_ok=True)
-        try:
-            from playwright.sync_api import sync_playwright
-        except ImportError:
-            pip_install('playwright')
-            subprocess.run([sys.executable, '-m', 'playwright', 'install', 'chromium', '--with-deps'], check=True)
-            from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch()
-            page    = browser.new_page()
-            page.set_content(html, wait_until='networkidle')
-            page.pdf(path=outfile, format='Letter', print_background=True,
-                     margin={'top': '10mm', 'bottom': '10mm', 'left': '10mm', 'right': '10mm'})
-            browser.close()
-        print(f"Prueba generada: {os.path.basename(outfile)}")
-    else:
-        main()
+    try:
+        if '--test' in sys.argv:
+            rows   = make_test_rows()
+            html   = build_html(rows)
+            today  = datetime.now().strftime('%d-%m-%y')
+            outfile = os.path.join(DIARIOS, f"Reporte Saladette Dia 9 {today} (Prueba).pdf")
+            os.makedirs(DIARIOS, exist_ok=True)
+            try:
+                from playwright.sync_api import sync_playwright
+            except ImportError:
+                pip_install('playwright')
+                subprocess.run([sys.executable, '-m', 'playwright', 'install', 'chromium', '--with-deps'], check=True)
+                from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                browser = p.chromium.launch()
+                page    = browser.new_page()
+                page.set_content(html, wait_until='networkidle')
+                page.pdf(path=outfile, format='Letter', print_background=True,
+                         margin={'top': '10mm', 'bottom': '10mm', 'left': '10mm', 'right': '10mm'})
+                browser.close()
+            print(f"Prueba generada: {os.path.basename(outfile)}")
+        else:
+            main()
+    except Exception as e:
+        print(f"\nERROR: {e}")
+    input("\nPresiona Enter para cerrar...")
