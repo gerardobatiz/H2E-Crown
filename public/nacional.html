@@ -15,21 +15,16 @@
   .acum-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 12px;
-    margin-bottom: 4px;
+    gap: 12px; margin-bottom: 4px;
   }
   .acum-card {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px 16px;
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
   }
   .acum-card h4 {
-    font-size: 13px; font-weight: 700;
-    color: var(--gm); margin: 0 0 10px;
-    text-transform: capitalize;
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 7px;
+    font-size: 13px; font-weight: 700; color: var(--gm);
+    margin: 0 0 10px; text-transform: capitalize;
+    border-bottom: 1px solid var(--border); padding-bottom: 7px;
   }
   .acum-row {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -54,11 +49,42 @@
   .prod-tab:hover  { background: var(--bg2); color: var(--text); }
   .prod-tab.active { background: var(--bg); color: var(--text);
                      border-color: var(--border); border-bottom-color: var(--bg); }
+  .prod-tab.totales { font-weight: 700; color: var(--gm); }
+  .prod-tab.totales.active { color: var(--gm); }
+
+  /* Filters */
+  .filters-bar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+  .filter-label { font-size: 11px; color: var(--text2); white-space: nowrap; }
+  .filter-select, .filter-date {
+    font-size: 12px; padding: 4px 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .filter-select { min-width: 140px; }
+  .filter-select:focus, .filter-date:focus { outline: none; border-color: var(--gm); }
+  .filter-sep { color: var(--text2); font-size: 11px; }
+
+  /* Sortable headers */
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { background: rgba(0,0,0,.06); }
+  th.sort-asc::after  { content: ' ↑'; opacity: .8; }
+  th.sort-desc::after { content: ' ↓'; opacity: .8; }
+
+  /* Totals footer */
+  tfoot td {
+    font-weight: 700; background: var(--bg2);
+    border-top: 2px solid var(--border);
+    font-size: 11px; padding: 4px 6px;
+  }
 
   /* Table helpers */
   .num-col { text-align: right; font-variant-numeric: tabular-nums; }
-  .neg     { color: #e74c3c; }
-  .dim     { color: var(--text2); }
+  .neg { color: #e74c3c; }
+  .dim { color: var(--text2); }
 </style>
 </head>
 <body>
@@ -70,12 +96,12 @@
 
 <main>
 
+  <!-- Grand total KPIs at top -->
+  <div class="kpis" id="kpis"></div>
+
   <!-- Summary by product -->
   <div class="section-title">Resumen por producto</div>
   <div class="acum-grid" id="acumGrid"></div>
-
-  <!-- Grand total KPIs -->
-  <div class="kpis" id="kpis"></div>
 
   <!-- Detail table -->
   <div class="tcard">
@@ -86,6 +112,17 @@
         <button class="btn btn-outline btn-sm" onclick="exportCSV()">⬇ CSV</button>
         <button class="btn btn-primary btn-sm" onclick="loadData()">↻ Actualizar</button>
       </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters-bar">
+      <span class="filter-label">Fecha:</span>
+      <input class="filter-date" id="fDesde" type="date" onchange="applyRender()" title="Desde">
+      <span class="filter-sep">—</span>
+      <input class="filter-date" id="fHasta" type="date" onchange="applyRender()" title="Hasta">
+      <span class="filter-label" style="margin-left:8px">Cliente:</span>
+      <select class="filter-select" id="fCliente" onchange="applyRender()"><option value="">Todos</option></select>
+      <button class="btn btn-outline btn-sm" onclick="clearFilters()">✕ Limpiar</button>
     </div>
 
     <div class="prod-tabs" id="prodTabs"></div>
@@ -100,6 +137,8 @@
 /* ── State ──────────────────────────────────────────────────────────────────── */
 let allData       = {};
 let activeProduct = '';
+let sortCol       = null;
+let sortDir       = 1; // 1 asc, -1 desc
 
 /* ── Load ───────────────────────────────────────────────────────────────────── */
 async function loadData() {
@@ -123,9 +162,10 @@ async function loadData() {
 }
 
 function renderAll() {
-  renderAcum();
   renderKPIs();
+  renderAcum();
   renderProdTabs();
+  populateFilters();
   applyRender();
 }
 
@@ -133,7 +173,7 @@ function renderAll() {
 const ACUM_LABELS = {
   'venta':           'Venta bruta',
   'pagos':           'Pagos recibidos',
-  'por pagar':       'Por pagar',
+  'por pagar':       'Por cobrar',
   'comision cbe':    'Comisión CBE',
   'comision pagada': 'Comisión pagada',
   'balance p/h2e':   'Balance H2E',
@@ -143,22 +183,19 @@ const ACUM_HL = new Set(['balance p/h2e', 'por pagar']);
 function renderAcum() {
   const { acum } = allData;
   if (!acum?.length) { document.getElementById('acumGrid').innerHTML = ''; return; }
-
   document.getElementById('acumGrid').innerHTML = acum.map(row => {
     const prod   = row['Producto'] || '—';
     const fields = Object.entries(row).filter(([k]) => k !== 'Producto');
-    return `
-      <div class="acum-card">
-        <h4>${escHtml(prod)}</h4>
-        ${fields.map(([k, v]) => {
-          const label = ACUM_LABELS[k.toLowerCase()] || k;
-          const hl    = ACUM_HL.has(k.toLowerCase());
-          return `<div class="acum-row${hl ? ' hl' : ''}">
-            <span>${escHtml(label)}</span>
-            <span class="val">${fmtAmt(v)}</span>
-          </div>`;
-        }).join('')}
-      </div>`;
+    return `<div class="acum-card">
+      <h4>${escHtml(prod)}</h4>
+      ${fields.map(([k, v]) => {
+        const label = ACUM_LABELS[k.toLowerCase()] || k;
+        const hl    = ACUM_HL.has(k.toLowerCase());
+        return `<div class="acum-row${hl ? ' hl' : ''}">
+          <span>${escHtml(label)}</span><span class="val">${fmtAmt(v)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
   }).join('');
 }
 
@@ -166,14 +203,13 @@ function renderAcum() {
 function renderKPIs() {
   const { acum } = allData;
   if (!acum?.length) { document.getElementById('kpis').innerHTML = ''; return; }
-
   const sum  = key => acum.reduce((s, r) => s + (r[key] ?? 0), 0);
   const kpis = [
-    { label: 'Venta total',      value: fmtAmt(sum('venta')) },
-    { label: 'Pagos recibidos',  value: fmtAmt(sum('pagos')) },
-    { label: 'Por pagar',        value: fmtAmt(sum('por pagar')) },
-    { label: 'Balance H2E',      value: fmtAmt(sum('balance p/h2e')) },
-    { label: 'Comisión CBE',     value: fmtAmt(sum('comision cbe')) },
+    { label: 'Venta total',     value: fmtAmt(sum('venta')) },
+    { label: 'Pagos recibidos', value: fmtAmt(sum('pagos')) },
+    { label: 'Por cobrar',      value: fmtAmt(sum('por pagar')) },
+    { label: 'Balance H2E',     value: fmtAmt(sum('balance p/h2e')) },
+    { label: 'Comisión CBE',    value: fmtAmt(sum('comision cbe')) },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value">${k.value}</div></div>`
@@ -183,81 +219,214 @@ function renderKPIs() {
 /* ── Product tabs ───────────────────────────────────────────────────────────── */
 function renderProdTabs() {
   const { products, sheets } = allData;
-  document.getElementById('prodTabs').innerHTML = products.map(p => {
-    const n = (sheets[p] || []).length;
-    return `<div class="prod-tab${p === activeProduct ? ' active' : ''}" onclick="switchProduct('${escHtml(p)}')">${escHtml(p)} <span style="font-size:10px;opacity:.6">${n}</span></div>`;
+  const tabs = [...products, 'Totales'];
+  document.getElementById('prodTabs').innerHTML = tabs.map(p => {
+    const isTot = p === 'Totales';
+    const n = isTot
+      ? products.reduce((s, prod) => s + (sheets[prod] || []).length, 0)
+      : (sheets[p] || []).length;
+    return `<div class="prod-tab${p === activeProduct ? ' active' : ''}${isTot ? ' totales' : ''}"
+      onclick="switchProduct('${escHtml(p)}')">${escHtml(p)} <span style="font-size:10px;opacity:.6">${n}</span></div>`;
   }).join('');
 }
 
 function switchProduct(name) {
   activeProduct = name;
+  sortCol = null; sortDir = 1;
   renderProdTabs();
   document.getElementById('search').value = '';
+  populateFilters();
   applyRender();
 }
 
+/* ── Get active rows ────────────────────────────────────────────────────────── */
+function getActiveRows() {
+  const { products, sheets } = allData;
+  if (activeProduct === 'Totales')
+    return products.flatMap(p => (sheets[p] || []).map(r => ({ ...r, _Producto: p })));
+  return (sheets[activeProduct] || []);
+}
+
+/* ── Date parsing ───────────────────────────────────────────────────────────── */
+function parseDate(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  // dd/mm/yy or dd/mm/yyyy
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    let y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return new Date(+y, +m[2] - 1, +m[1]);
+  }
+  // mm/dd/yyyy (US fallback)
+  m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
+  if (m) {
+    let y = m[3].length === 2 ? '20' + m[3] : m[3];
+    return new Date(+y, +m[2] - 1, +m[1]);
+  }
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+/* ── Filters ────────────────────────────────────────────────────────────────── */
+function populateFilters() {
+  const rows = getActiveRows();
+  fillSelect('fCliente', 'Todos', uniq(rows, 'Cliente'));
+}
+
+function uniq(rows, col) {
+  return [...new Set(rows.map(r => r[col]).filter(Boolean))].sort();
+}
+
+function fillSelect(id, placeholder, options) {
+  const sel = document.getElementById(id);
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">${placeholder}</option>` +
+    options.map(v => `<option value="${escHtml(String(v))}"${String(v) === cur ? ' selected' : ''}>${escHtml(String(v))}</option>`).join('');
+}
+
+function clearFilters() {
+  document.getElementById('fDesde').value   = '';
+  document.getElementById('fHasta').value   = '';
+  document.getElementById('fCliente').value = '';
+  document.getElementById('search').value   = '';
+  applyRender();
+}
+
+/* ── Sort ───────────────────────────────────────────────────────────────────── */
+function toggleSort(col) {
+  if (sortCol === col) sortDir = -sortDir;
+  else { sortCol = col; sortDir = 1; }
+  applyRender();
+}
+
+function sortRows(rows, col) {
+  if (!col) return rows;
+  return [...rows].sort((a, b) => {
+    let va = a[col] ?? '', vb = b[col] ?? '';
+    if (NUM_COLS.has(col)) {
+      va = parseFloat(va) || 0;
+      vb = parseFloat(vb) || 0;
+      return sortDir * (va - vb);
+    }
+    if (col === 'Fecha') {
+      const da = parseDate(va), db = parseDate(vb);
+      if (da && db) return sortDir * (da - db);
+    }
+    return sortDir * String(va).localeCompare(String(vb), 'es');
+  });
+}
+
 /* ── Table ──────────────────────────────────────────────────────────────────── */
-const COLS     = ['Fecha','Manifiesto','Cliente','Producto','Enviadas','Reportadas','x reportar','Precio','Venta','Gastos','Comisión CBE','Total','Real + Est'];
-const NUM_COLS = new Set(['Enviadas','Reportadas','x reportar','Precio','$ KG','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
-const AMT_COLS = new Set(['Precio','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
+const BASE_COLS = ['Fecha','Manifiesto','Cliente','Producto','Enviadas','Reportadas','x reportar','Precio','Venta','Gastos','Comisión CBE','Total','Real + Est'];
+const NUM_COLS  = new Set(['Enviadas','Reportadas','x reportar','Precio','$ KG','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
+const AMT_COLS  = new Set(['Precio','Venta','Gastos','Subtotal','Comisión','Comisión CBE','Total','Estimado','Real + Est']);
 
 function applyRender() {
-  const rows = (allData.sheets || {})[activeProduct] || [];
-  const q    = document.getElementById('search').value.toLowerCase().trim();
-  const cols = COLS.filter(c => rows.some(r => r[c] != null && r[c] !== ''));
+  let rows    = getActiveRows();
+  const isTot = activeProduct === 'Totales';
+  const total = rows.length;
 
-  const filtered = q
-    ? rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q)))
-    : rows;
+  // Date range filter
+  const desde  = document.getElementById('fDesde').value;
+  const hasta  = document.getElementById('fHasta').value;
+  const dDesde = desde ? new Date(desde) : null;
+  const dHasta = hasta ? new Date(hasta + 'T23:59:59') : null;
+  if (dDesde || dHasta) {
+    rows = rows.filter(r => {
+      const d = parseDate(r['Fecha']);
+      if (!d) return false;
+      if (dDesde && d < dDesde) return false;
+      if (dHasta && d > dHasta) return false;
+      return true;
+    });
+  }
+
+  // Cliente filter
+  const fCliente = document.getElementById('fCliente').value;
+  if (fCliente) rows = rows.filter(r => String(r['Cliente'] ?? '') === fCliente);
+
+  // Build columns; inject _Producto in Totales after Cliente
+  let cols = BASE_COLS.filter(c => rows.some(r => r[c] != null && r[c] !== ''));
+  if (isTot) {
+    const ci = cols.indexOf('Cliente');
+    ci >= 0 ? cols.splice(ci + 1, 0, '_Producto') : cols.unshift('_Producto');
+  }
+
+  // Text search
+  const q = document.getElementById('search').value.toLowerCase().trim();
+  if (q) rows = rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q)));
+
+  // Sort
+  rows = sortRows(rows, sortCol);
 
   document.getElementById('ttitle').textContent = activeProduct;
 
-  if (!filtered.length) {
+  if (!rows.length) {
     document.getElementById('twrap').innerHTML = `<div class="empty">Sin datos</div>`;
     document.getElementById('sl').textContent  = '0 filas';
     document.getElementById('sr').textContent  = '';
     return;
   }
 
-  const head = `<thead><tr>${cols.map(c =>
-    `<th class="${NUM_COLS.has(c) ? 'num-col' : ''}">${escHtml(c)}</th>`
-  ).join('')}</tr></thead>`;
+  // Header with sort indicators
+  const head = `<thead><tr>${cols.map(c => {
+    const isNum = NUM_COLS.has(c);
+    const cls   = ['sortable', isNum ? 'num-col' : '',
+                   sortCol === c ? (sortDir === 1 ? 'sort-asc' : 'sort-desc') : ''].filter(Boolean).join(' ');
+    return `<th class="${cls}" onclick="toggleSort('${escHtml(c)}')">${escHtml(colLabel(c))}</th>`;
+  }).join('')}</tr></thead>`;
 
-  const body = filtered.map(r => `<tr>${cols.map(c => {
+  // Body
+  const body = rows.map(r => `<tr>${cols.map(c => {
     const v = r[c];
     if (v === null || v === '' || v === undefined)
       return `<td class="${NUM_COLS.has(c) ? 'num-col' : ''}"><span class="rno">—</span></td>`;
     if (NUM_COLS.has(c)) {
-      const n   = parseFloat(v);
+      const n = parseFloat(v);
       if (!isNaN(n)) {
         const txt = AMT_COLS.has(c) ? fmtAmt(n) : fmtN(n);
-        const cls = `num-col${n < 0 ? ' neg' : n === 0 ? ' dim' : ''}`;
-        return `<td class="${cls}">${txt}</td>`;
+        return `<td class="num-col${n < 0 ? ' neg' : n === 0 ? ' dim' : ''}">${txt}</td>`;
       }
     }
     return `<td>${escHtml(String(v))}</td>`;
   }).join('')}</tr>`).join('');
 
+  // Footer totals for numeric columns
+  const foot = `<tfoot><tr>${cols.map((c, i) => {
+    if (i === 0) return `<td>TOTALES</td>`;
+    if (!NUM_COLS.has(c)) return `<td></td>`;
+    const tot = rows.reduce((s, r) => s + (parseFloat(r[c]) || 0), 0);
+    const txt = AMT_COLS.has(c) ? fmtAmt(tot) : fmtN(tot);
+    return `<td class="num-col${tot < 0 ? ' neg' : ''}">${txt}</td>`;
+  }).join('')}</tr></tfoot>`;
+
   document.getElementById('twrap').innerHTML =
-    `<table>${head}<tbody>${body}</tbody></table>`;
+    `<table>${head}<tbody>${body}</tbody>${foot}</table>`;
 
-  const totEnv  = filtered.reduce((s, r) => s + (r['Enviadas']      ?? 0), 0);
-  const totVent = filtered.reduce((s, r) => s + (r['Venta']         ?? 0), 0);
-  const totNet  = filtered.reduce((s, r) => s + (r['Total']         ?? 0), 0);
+  const totEnv  = rows.reduce((s, r) => s + (parseFloat(r['Enviadas']) || 0), 0);
+  const totVent = rows.reduce((s, r) => s + (parseFloat(r['Venta'])    || 0), 0);
+  const totNet  = rows.reduce((s, r) => s + (parseFloat(r['Total'])    || 0), 0);
 
-  document.getElementById('sl').textContent = `${filtered.length} de ${rows.length} ventas`;
+  document.getElementById('sl').textContent = `${rows.length} de ${total} ventas`;
   document.getElementById('sr').textContent =
     `Cajas: ${fmtN(totEnv)} · Venta: ${fmtAmt(totVent)} · Neto H2E: ${fmtAmt(totNet)}`;
 }
 
 /* ── CSV export ─────────────────────────────────────────────────────────────── */
 function exportCSV() {
-  const rows = (allData.sheets || {})[activeProduct] || [];
-  const cols = COLS.filter(c => rows.some(r => r[c] != null));
-  const q    = document.getElementById('search').value.toLowerCase().trim();
-  const data = q ? rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q))) : rows;
-  const esc  = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv  = [cols.map(esc).join(','), ...data.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+  let rows    = getActiveRows();
+  const isTot = activeProduct === 'Totales';
+  let cols    = BASE_COLS.filter(c => rows.some(r => r[c] != null));
+  if (isTot) {
+    const ci = cols.indexOf('Cliente');
+    ci >= 0 ? cols.splice(ci + 1, 0, '_Producto') : cols.unshift('_Producto');
+  }
+  const q = document.getElementById('search').value.toLowerCase().trim();
+  if (q) rows = rows.filter(r => cols.some(c => String(r[c] ?? '').toLowerCase().includes(q)));
+  rows = sortRows(rows, sortCol);
+  const e   = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [cols.map(c => e(colLabel(c))).join(','),
+               ...rows.map(r => cols.map(c => e(r[c])).join(','))].join('\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
@@ -266,13 +435,14 @@ function exportCSV() {
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────────────── */
-const fmtAmt = n => {
+const colLabel = c => c === '_Producto' ? 'Producto' : c;
+const fmtAmt   = n => {
   if (n === null || n === undefined) return '—';
   const abs = Math.abs(n);
   const s   = `$${abs.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return n < 0 ? `(${s})` : s;
 };
-const fmtN   = n => (n === null || n === undefined) ? '—' : Math.round(n).toLocaleString('es-MX');
+const fmtN    = n => (n === null || n === undefined) ? '—' : Math.round(n).toLocaleString('es-MX');
 const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 loadData();
