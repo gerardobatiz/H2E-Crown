@@ -85,6 +85,27 @@
   .num-col { text-align: right; font-variant-numeric: tabular-nums; }
   .neg { color: #e74c3c; }
   .dim { color: var(--text2); }
+
+  /* Cobros section */
+  .cobros-tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid var(--border); margin-top: 6px; }
+  .cobros-tab {
+    padding: 8px 22px; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+    color: var(--text2); background: transparent; transition: all .15s; margin-bottom: -2px;
+  }
+  .cobros-tab:hover  { background: var(--bg2); color: var(--text); }
+  .cobros-tab.active { background: var(--bg); color: var(--text); border-color: var(--border); border-bottom-color: var(--bg); }
+
+  /* Status chips */
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .chip-ok  { background: #d4edda; color: #155724; }
+  .chip-pen { background: #fff3cd; color: #856404; }
+
+  /* Upload button */
+  .btn-upload { font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); color: var(--text2); cursor: pointer; white-space: nowrap; }
+  .btn-upload:hover { border-color: var(--gm); color: var(--gm); }
+  .link-pdf { font-size: 11px; color: var(--gm); text-decoration: none; }
+  .link-pdf:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -131,20 +152,34 @@
     <div class="sbar"><span id="sl">—</span><span id="sr">—</span></div>
   </div>
 
+  <!-- Cobros / Estado de Cuenta -->
+  <div class="section-title" style="margin-top:28px">Estado de Cuenta — Cobros</div>
+  <div class="cobros-tabs" id="cobrosTabs"></div>
+  <div class="tcard">
+    <div class="twrap" id="cobrosWrap"><div class="empty">Cargando…</div></div>
+    <div class="sbar"><span id="cobrosSL">—</span><span id="cobrosSR">—</span></div>
+  </div>
+
 </main>
 
 <script>
 /* ── State ──────────────────────────────────────────────────────────────────── */
-let allData       = {};
-let activeProduct = '';
-let sortCol       = null;
-let sortDir       = 1; // 1 asc, -1 desc
+let allData         = {};
+let activeProduct   = '';
+let sortCol         = null;
+let sortDir         = 1;
+let cobrosData      = {};
+let activeCobros    = '';
+let pdfList         = {};
 
 /* ── Load ───────────────────────────────────────────────────────────────────── */
 async function loadData() {
   document.getElementById('ts').textContent = 'Cargando…';
   try {
-    const res  = await fetch('/api/nacional');
+    const [res, cobrosRes] = await Promise.all([
+      fetch('/api/nacional'),
+      fetch('/api/cobros')
+    ]);
     const text = await res.text();
     let data;
     try { data = JSON.parse(text); }
@@ -152,6 +187,11 @@ async function loadData() {
     if (!res.ok) throw new Error(data.error || res.statusText);
     allData       = data;
     activeProduct = data.products[0] || '';
+    pdfList       = data.manifiestos || {};
+
+    cobrosData = cobrosRes.ok ? await cobrosRes.json() : { products: [], sheets: {}, comprobantes: {} };
+    activeCobros = (cobrosData.products || [])[0] || '';
+
     renderAll();
     document.getElementById('ts').textContent = `Actualizado: ${new Date().toLocaleTimeString('es-MX')}`;
   } catch (err) {
@@ -167,25 +207,24 @@ function renderAll() {
   renderProdTabs();
   populateFilters();
   applyRender();
+  renderCobrosTabs();
+  renderCobrosTable();
 }
 
 /* ── Acum cards ─────────────────────────────────────────────────────────────── */
 const ACUM_LABELS = {
-  'venta':           'Venta bruta',
-  'pagos':           'Pagos recibidos',
-  'por pagar':       'Por cobrar',
-  'comision cbe':    'Comisión CBE',
-  'comision pagada': 'Comisión pagada',
-  'balance p/h2e':   'Balance H2E',
+  'venta':        'Venta bruta',
+  'comision cbe': 'Comisión CBE',
 };
-const ACUM_HL = new Set(['balance p/h2e', 'por pagar']);
+const ACUM_SHOW = new Set(['venta', 'comision cbe']);
+const ACUM_HL   = new Set();
 
 function renderAcum() {
   const { acum } = allData;
   if (!acum?.length) { document.getElementById('acumGrid').innerHTML = ''; return; }
   document.getElementById('acumGrid').innerHTML = acum.map(row => {
     const prod   = row['Producto'] || '—';
-    const fields = Object.entries(row).filter(([k]) => k !== 'Producto');
+    const fields = Object.entries(row).filter(([k]) => ACUM_SHOW.has(k.toLowerCase()));
     return `<div class="acum-card">
       <h4>${escHtml(prod)}</h4>
       ${fields.map(([k, v]) => {
@@ -205,11 +244,8 @@ function renderKPIs() {
   if (!acum?.length) { document.getElementById('kpis').innerHTML = ''; return; }
   const sum  = key => acum.reduce((s, r) => s + (r[key] ?? 0), 0);
   const kpis = [
-    { label: 'Venta total',     value: fmtAmt(sum('venta')) },
-    { label: 'Pagos recibidos', value: fmtAmt(sum('pagos')) },
-    { label: 'Por cobrar',      value: fmtAmt(sum('por pagar')) },
-    { label: 'Balance H2E',     value: fmtAmt(sum('balance p/h2e')) },
-    { label: 'Comisión CBE',    value: fmtAmt(sum('comision cbe')) },
+    { label: 'Venta total',  value: fmtAmt(sum('venta')) },
+    { label: 'Comisión CBE', value: fmtAmt(sum('comision cbe')) },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi"><div class="kpi-label">${k.label}</div><div class="kpi-value">${k.value}</div></div>`
@@ -388,6 +424,13 @@ function applyRender() {
         return `<td class="num-col${n < 0 ? ' neg' : n === 0 ? ' dim' : ''}">${txt}</td>`;
       }
     }
+    if (c === 'Manifiesto') {
+      const num = String(v).trim();
+      const extra = pdfList[num]
+        ? ` <a class="link-pdf" href="/api/manifiesto-pdf/${encodeURIComponent(num)}" target="_blank" title="Ver PDF">📄</a>`
+        : ` <label class="btn-upload" title="Subir PDF del manifiesto">⬆<input type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadManifiestoPDF('${escHtml(num)}',this)"></label>`;
+      return `<td style="white-space:nowrap">${escHtml(num)}${extra}</td>`;
+    }
     return `<td>${escHtml(String(v))}</td>`;
   }).join('')}</tr>`).join('');
 
@@ -432,6 +475,124 @@ function exportCSV() {
   a.href     = URL.createObjectURL(blob);
   a.download = `CBE_${activeProduct}_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
+}
+
+/* ── Cobros ──────────────────────────────────────────────────────────────────── */
+const COBROS_COLS     = ['Fecha','Manifiesto','Liquidación','Cliente','Cajas','Precio','Monto','Pago a H2E','Fecha Pago','Monto Pago'];
+const COBROS_NUM_COLS = new Set(['Cajas','Precio','Monto','Monto Pago']);
+const COBROS_AMT_COLS = new Set(['Precio','Monto','Monto Pago']);
+
+function renderCobrosTabs() {
+  const { products } = cobrosData;
+  if (!products?.length) { document.getElementById('cobrosTabs').innerHTML = ''; return; }
+  document.getElementById('cobrosTabs').innerHTML = products.map(p =>
+    `<div class="cobros-tab${p === activeCobros ? ' active' : ''}" onclick="switchCobros('${escHtml(p)}')">${escHtml(p)}</div>`
+  ).join('');
+}
+
+function switchCobros(name) {
+  activeCobros = name;
+  renderCobrosTabs();
+  renderCobrosTable();
+}
+
+function renderCobrosTable() {
+  const rows = (cobrosData.sheets || {})[activeCobros] || [];
+  const comp = cobrosData.comprobantes || {};
+  const wrap = document.getElementById('cobrosWrap');
+
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty">Sin datos</div>';
+    document.getElementById('cobrosSL').textContent = '0 filas';
+    document.getElementById('cobrosSR').textContent = '';
+    return;
+  }
+
+  const cols = COBROS_COLS.filter(c => rows.some(r => r[c] != null && r[c] !== ''));
+
+  const head = `<thead><tr>${cols.map(c =>
+    `<th class="${COBROS_NUM_COLS.has(c) ? 'num-col' : ''}">${escHtml(c)}</th>`
+  ).join('')}<th>Comprobante</th></tr></thead>`;
+
+  const body = rows.map(r => {
+    const cells = cols.map(c => {
+      const v = r[c];
+      if (v === null || v === '' || v === undefined)
+        return `<td class="${COBROS_NUM_COLS.has(c) ? 'num-col' : ''}"><span class="rno">—</span></td>`;
+      if (COBROS_NUM_COLS.has(c)) {
+        const n = parseFloat(v);
+        if (!isNaN(n)) {
+          const txt = COBROS_AMT_COLS.has(c) ? fmtAmt(n) : fmtN(n);
+          return `<td class="num-col${n < 0 ? ' neg' : n === 0 ? ' dim' : ''}">${txt}</td>`;
+        }
+      }
+      if (c === 'Pago a H2E') {
+        const s = String(v).toLowerCase();
+        const cls = s === 'pagado' ? 'chip chip-ok' : 'chip chip-pen';
+        return `<td><span class="${cls}">${escHtml(v)}</span></td>`;
+      }
+      return `<td>${escHtml(String(v))}</td>`;
+    }).join('');
+
+    const num = String(r['Manifiesto'] || '').trim();
+    const compFile = comp[num];
+    const compCell = num
+      ? (compFile
+          ? `<td><a class="link-pdf" href="/api/comprobante/${encodeURIComponent(num)}" target="_blank">📄 Ver</a></td>`
+          : `<td><label class="btn-upload" title="Adjuntar comprobante">📎 Adjuntar<input type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="uploadComprobante('${escHtml(num)}',this)"></label></td>`)
+      : '<td></td>';
+
+    return `<tr>${cells}${compCell}</tr>`;
+  }).join('');
+
+  const foot = `<tfoot><tr>${cols.map((c, i) => {
+    if (i === 0) return `<td>TOTALES</td>`;
+    if (!COBROS_NUM_COLS.has(c)) return `<td></td>`;
+    const tot = rows.reduce((s, r) => s + (parseFloat(r[c]) || 0), 0);
+    const txt = COBROS_AMT_COLS.has(c) ? fmtAmt(tot) : fmtN(tot);
+    return `<td class="num-col">${txt}</td>`;
+  }).join('')}<td></td></tr></tfoot>`;
+
+  wrap.innerHTML = `<table>${head}<tbody>${body}</tbody>${foot}</table>`;
+
+  const pagados   = rows.filter(r => String(r['Pago a H2E'] || '').toLowerCase() === 'pagado').length;
+  const pendientes = rows.length - pagados;
+  const totMonto  = rows.reduce((s, r) => s + (parseFloat(r['Monto']) || 0), 0);
+  const totPagado = rows.reduce((s, r) =>
+    String(r['Pago a H2E'] || '').toLowerCase() === 'pagado' ? s + (parseFloat(r['Monto']) || 0) : s, 0);
+
+  document.getElementById('cobrosSL').textContent = `${rows.length} manifiestos · ${pagados} pagados · ${pendientes} pendientes`;
+  document.getElementById('cobrosSR').textContent = `Total: ${fmtAmt(totMonto)} · Cobrado: ${fmtAmt(totPagado)}`;
+}
+
+async function uploadManifiestoPDF(num, input) {
+  if (!input.files[0]) return;
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const res = await fetch(`/api/upload-manifiesto/${encodeURIComponent(num)}`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    pdfList[num] = data.file;
+    applyRender();
+  } catch(e) {
+    alert('Error al subir manifiesto: ' + e.message);
+  }
+}
+
+async function uploadComprobante(num, input) {
+  if (!input.files[0]) return;
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  try {
+    const res = await fetch(`/api/upload-comprobante/${encodeURIComponent(num)}`, { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error);
+    cobrosData.comprobantes[num] = data.file;
+    renderCobrosTable();
+  } catch(e) {
+    alert('Error al subir comprobante: ' + e.message);
+  }
 }
 
 /* ── Helpers ────────────────────────────────────────────────────────────────── */

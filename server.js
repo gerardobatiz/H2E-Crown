@@ -704,8 +704,28 @@ app.get('/report/sales-by-season', async (req, res) => {
 
 // ── Nacional (CBE): lee el Excel del folder ───────────────────────────────────
 {
-  const XLSX      = require('xlsx');
-  const XLSX_FILE = path.join(__dirname, 'Info para Claude', 'Reportes', 'Nacional', 'Ventas CBE-H2E 2.xlsx');
+  const XLSX             = require('xlsx');
+  const multer           = require('multer');
+  const XLSX_FILE        = path.join(__dirname, 'Info para Claude', 'Reportes', 'Nacional', 'Ventas CBE-H2E 2.xlsx');
+  const COMPROBANTES_DIR = path.join(__dirname, 'comprobantes');
+  const MANIFIESTOS_DIR  = path.join(__dirname, 'manifiestos');
+
+  if (!fs.existsSync(COMPROBANTES_DIR)) fs.mkdirSync(COMPROBANTES_DIR);
+  if (!fs.existsSync(MANIFIESTOS_DIR))  fs.mkdirSync(MANIFIESTOS_DIR);
+
+  const mkUpload = (dir, prefix) => multer({
+    storage: multer.diskStorage({
+      destination: dir,
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname) || '.pdf';
+        cb(null, `${prefix}-${req.params.num}${ext}`);
+      }
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 }
+  });
+
+  const uploadComprobante = mkUpload(COMPROBANTES_DIR, 'comp');
+  const uploadManifiesto  = mkUpload(MANIFIESTOS_DIR,  'manif');
 
   const parseNum = v => {
     if (v === null || v === undefined) return null;
@@ -763,17 +783,102 @@ app.get('/report/sales-by-season', async (req, res) => {
     }).filter(r => r['Producto']);
   };
 
+  // Estado de Cuenta sheets: row[0] = aggregate, row[1] = headers, row[2+] = data
+  const parseEstadoDeCuenta = (wb, name) => {
+    if (!wb.SheetNames.includes(name)) return [];
+    const raw = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: null, raw: false });
+    if (raw.length < 3) return [];
+
+    const hdrRow = raw[1];
+    const keyToLabel = {};
+    const seen = new Set();
+    for (const [k, v] of Object.entries(hdrRow)) {
+      let label = v ? String(v).trim() : null;
+      if (!label) continue;
+      if (label === 'Fecha')  label = seen.has('Fecha')  ? 'Fecha Pago'  : 'Fecha';
+      if (label === 'Monto')  label = seen.has('Monto')  ? 'Monto Pago'  : 'Monto';
+      if (label === '0')      label = 'Balance';
+      keyToLabel[k] = label;
+      seen.add(label);
+    }
+
+    const NUM_EDC = new Set(['Cajas','Precio','Gastos','Monto','Monto Pago','Balance']);
+
+    return raw.slice(2).map(r => {
+      const row = {};
+      for (const [k, v] of Object.entries(r)) {
+        const label = keyToLabel[k];
+        if (!label) continue;
+        row[label] = NUM_EDC.has(label) ? parseNum(v) : (v ? String(v).trim() : null);
+      }
+      return row;
+    }).filter(r => r['Manifiesto'] || r['Fecha']);
+  };
+
+  const scanDir = (dir, prefix) => {
+    const map = {};
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        const m = f.match(new RegExp(`^${prefix}-(\\d+)\\.`, 'i'));
+        if (m) map[m[1]] = f;
+      }
+    } catch(e) {}
+    return map;
+  };
+
   app.get('/api/nacional', (req, res) => {
     try {
       const wb       = XLSX.readFile(XLSX_FILE);
       const products = ['Tomatillo', 'Morrón', 'Roma'];
       const sheets   = {};
       for (const p of products) sheets[p] = parseProductSheet(wb, p);
-      res.json({ products, sheets, acum: parseAcum(wb) });
+      res.json({ products, sheets, acum: parseAcum(wb), manifiestos: scanDir(MANIFIESTOS_DIR, 'manif') });
     } catch (err) {
       console.error('[Nacional]', err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  app.get('/api/cobros', (req, res) => {
+    try {
+      const wb       = XLSX.readFile(XLSX_FILE);
+      const products = ['Tomatillo', 'Morrón', 'Roma'];
+      const sheetMap = { Tomatillo: 'Estado de Cuenta T', Roma: 'Estado de Cuenta R', 'Morrón': 'Estado de Cuenta M' };
+      const sheets   = {};
+      for (const p of products) sheets[p] = parseEstadoDeCuenta(wb, sheetMap[p]);
+      res.json({ products, sheets, comprobantes: scanDir(COMPROBANTES_DIR, 'comp') });
+    } catch (err) {
+      console.error('[Cobros]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/manifiesto-pdf/:num', (req, res) => {
+    const fname = scanDir(MANIFIESTOS_DIR, 'manif')[req.params.num];
+    if (!fname) return res.status(404).json({ error: 'Not found' });
+    res.sendFile(path.join(MANIFIESTOS_DIR, fname));
+  });
+
+  app.post('/api/upload-manifiesto/:num', (req, res) => {
+    uploadManifiesto.single('file')(req, res, err => {
+      if (err) return res.status(400).json({ error: err.message });
+      if (!req.file) return res.status(400).json({ error: 'No file' });
+      res.json({ ok: true, file: req.file.filename });
+    });
+  });
+
+  app.post('/api/upload-comprobante/:num', (req, res) => {
+    uploadComprobante.single('file')(req, res, err => {
+      if (err) return res.status(400).json({ error: err.message });
+      if (!req.file) return res.status(400).json({ error: 'No file' });
+      res.json({ ok: true, file: req.file.filename });
+    });
+  });
+
+  app.get('/api/comprobante/:num', (req, res) => {
+    const fname = scanDir(COMPROBANTES_DIR, 'comp')[req.params.num];
+    if (!fname) return res.status(404).json({ error: 'Not found' });
+    res.sendFile(path.join(COMPROBANTES_DIR, fname));
   });
 }
 
