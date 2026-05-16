@@ -287,11 +287,14 @@ function getActiveRows() {
 function parseDate(v) {
   if (!v) return null;
   const s = String(v).trim();
-  // M/D/YY or M/D/YYYY (US format from Excel, e.g. "4/16/26")
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  // ISO format: YYYY-MM-DD (Railway/Linux xlsx output)
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  // US format: M/D/YY (Windows xlsx output)
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m) {
     const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-    return new Date(y, +m[1] - 1, +m[2]); // m[1]=month, m[2]=day
+    return new Date(y, +m[1] - 1, +m[2]);
   }
   const d = new Date(s);
   return isNaN(d) ? null : d;

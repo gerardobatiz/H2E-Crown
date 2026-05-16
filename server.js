@@ -759,14 +759,9 @@ app.get('/report/sales-by-season', async (req, res) => {
       return row;
     }).filter(r => r['Fecha'] || r['Manifiesto']);
 
-    // Sort by Fecha descending (most recent first) — M/D/YY format from Excel
-    const fechaTs = v => {
-      const m = v && String(v).match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-      if (!m) return 0;
-      const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
-      return new Date(y, +m[1] - 1, +m[2]).getTime();
-    };
-    rows.sort((a, b) => fechaTs(b['Fecha']) - fechaTs(a['Fecha']));
+    // Sort by Fecha descending (most recent first)
+    // Handles ISO "2026-04-16" (Railway/Linux) and M/D/YY "4/16/26" (Windows)
+    rows.sort((a, b) => String(b['Fecha'] || '').localeCompare(String(a['Fecha'] || '')));
     return rows;
   };
 
