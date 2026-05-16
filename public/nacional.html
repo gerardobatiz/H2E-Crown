@@ -166,8 +166,8 @@
 /* ── State ──────────────────────────────────────────────────────────────────── */
 let allData         = {};
 let activeProduct   = '';
-let sortCol         = null;
-let sortDir         = 1;
+let sortCol         = 'Fecha';
+let sortDir         = -1;
 let cobrosData      = {};
 let activeCobros    = '';
 let pdfList         = {};
@@ -268,7 +268,7 @@ function renderProdTabs() {
 
 function switchProduct(name) {
   activeProduct = name;
-  sortCol = null; sortDir = 1;
+  sortCol = 'Fecha'; sortDir = -1;
   renderProdTabs();
   document.getElementById('search').value = '';
   populateFilters();
