@@ -287,17 +287,11 @@ function getActiveRows() {
 function parseDate(v) {
   if (!v) return null;
   const s = String(v).trim();
-  // dd/mm/yy or dd/mm/yyyy
+  // M/D/YY or M/D/YYYY (US format from Excel, e.g. "4/16/26")
   let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (m) {
-    let y = m[3].length === 2 ? '20' + m[3] : m[3];
-    return new Date(+y, +m[2] - 1, +m[1]);
-  }
-  // mm/dd/yyyy (US fallback)
-  m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{2,4})$/);
-  if (m) {
-    let y = m[3].length === 2 ? '20' + m[3] : m[3];
-    return new Date(+y, +m[2] - 1, +m[1]);
+    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    return new Date(y, +m[1] - 1, +m[2]); // m[1]=month, m[2]=day
   }
   const d = new Date(s);
   return isNaN(d) ? null : d;
