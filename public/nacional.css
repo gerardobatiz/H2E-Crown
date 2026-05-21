@@ -1,0 +1,100 @@
+  .section-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .06em; color: var(--text2); margin: 20px 0 10px;
+  }
+
+  /* Acum summary cards */
+  .acum-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px; margin-bottom: 4px;
+  }
+  .acum-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .acum-card h4 {
+    font-size: 13px; font-weight: 700; color: var(--gm);
+    margin: 0 0 10px; text-transform: capitalize;
+    border-bottom: 1px solid var(--border); padding-bottom: 7px;
+  }
+  .acum-row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; padding: 4px 0; color: var(--text2);
+    border-bottom: 1px solid var(--bg2);
+  }
+  .acum-row:last-child { border-bottom: none; }
+  .acum-row.hl { color: var(--text); font-weight: 600; }
+  .acum-row .val { font-variant-numeric: tabular-nums; }
+
+  /* Product tabs */
+  .prod-tabs {
+    display: flex; gap: 0; margin-bottom: 0;
+    border-bottom: 2px solid var(--border);
+  }
+  .prod-tab {
+    padding: 8px 22px; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+    color: var(--text2); background: transparent; transition: all .15s;
+    margin-bottom: -2px;
+  }
+  .prod-tab:hover  { background: var(--bg2); color: var(--text); }
+  .prod-tab.active { background: var(--bg); color: var(--text);
+                     border-color: var(--border); border-bottom-color: var(--bg); }
+  .prod-tab.totales { font-weight: 700; color: var(--gm); }
+  .prod-tab.totales.active { color: var(--gm); }
+
+  /* Filters */
+  .filters-bar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+  }
+  .filter-label { font-size: 11px; color: var(--text2); white-space: nowrap; }
+  .filter-select, .filter-date {
+    font-size: 12px; padding: 4px 8px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .filter-select { min-width: 140px; }
+  .filter-select:focus, .filter-date:focus { outline: none; border-color: var(--gm); }
+  .filter-sep { color: var(--text2); font-size: 11px; }
+
+  /* Sortable headers */
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { background: rgba(0,0,0,.06); }
+  th.sort-asc::after  { content: ' ↑'; opacity: .8; }
+  th.sort-desc::after { content: ' ↓'; opacity: .8; }
+
+  /* Totals footer */
+  tfoot td {
+    font-weight: 700; background: var(--bg2);
+    border-top: 2px solid var(--border);
+    font-size: 11px; padding: 4px 6px;
+  }
+
+  /* Table helpers */
+  .num-col { text-align: right; font-variant-numeric: tabular-nums; }
+  .neg { color: #e74c3c; }
+  .dim { color: var(--text2); }
+
+  /* Cobros section */
+  .cobros-tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 2px solid var(--border); margin-top: 6px; }
+  .cobros-tab {
+    padding: 8px 22px; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0;
+    color: var(--text2); background: transparent; transition: all .15s; margin-bottom: -2px;
+  }
+  .cobros-tab:hover  { background: var(--bg2); color: var(--text); }
+  .cobros-tab.active { background: var(--bg); color: var(--text); border-color: var(--border); border-bottom-color: var(--bg); }
+
+  /* Status chips */
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .chip-ok  { background: #d4edda; color: #155724; }
+  .chip-pen { background: #fff3cd; color: #856404; }
+
+  /* Upload button */
+  .btn-upload { font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); color: var(--text2); cursor: pointer; white-space: nowrap; }
+  .btn-upload:hover { border-color: var(--gm); color: var(--gm); }
+  .link-pdf { font-size: 11px; color: var(--gm); text-decoration: none; }
+  .link-pdf:hover { text-decoration: underline; }
