@@ -206,6 +206,13 @@ function renderAll() {
   renderAcum();
   renderProdTabs();
   populateFilters();
+  if (!document.getElementById('fDesde').value && !document.getElementById('fHasta').value) {
+    const hoy = new Date();
+    const hace7 = new Date(hoy); hace7.setDate(hoy.getDate() - 6);
+    const fmt = d => d.toISOString().slice(0, 10);
+    document.getElementById('fDesde').value = fmt(hace7);
+    document.getElementById('fHasta').value = fmt(hoy);
+  }
   applyRender();
   renderCobrosTabs();
   renderCobrosTable();
