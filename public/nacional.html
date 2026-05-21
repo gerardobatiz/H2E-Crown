@@ -172,6 +172,20 @@ let cobrosData      = {};
 let activeCobros    = '';
 let pdfList         = {};
 
+/* ── Default date range: last 7 days ────────────────────────────────────────── */
+(function() {
+  const fmtLocal = d => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+  const hoy = new Date();
+  const hace7 = new Date(hoy); hace7.setDate(hoy.getDate() - 6);
+  document.getElementById('fDesde').value = fmtLocal(hace7);
+  document.getElementById('fHasta').value = fmtLocal(hoy);
+})();
+
 /* ── Load ───────────────────────────────────────────────────────────────────── */
 async function loadData() {
   document.getElementById('ts').textContent = 'Cargando…';
@@ -206,13 +220,6 @@ function renderAll() {
   renderAcum();
   renderProdTabs();
   populateFilters();
-  if (!document.getElementById('fDesde').value && !document.getElementById('fHasta').value) {
-    const hoy = new Date();
-    const hace7 = new Date(hoy); hace7.setDate(hoy.getDate() - 6);
-    const fmt = d => d.toISOString().slice(0, 10);
-    document.getElementById('fDesde').value = fmt(hace7);
-    document.getElementById('fHasta').value = fmt(hoy);
-  }
   applyRender();
   renderCobrosTabs();
   renderCobrosTable();
